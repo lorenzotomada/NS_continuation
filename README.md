@@ -1,2 +1,5 @@
-# NS_continuation
-Project for the exam of ATSC
+To run using MPI:
+
+```bash
+mpirun -np 4 ./main
+```

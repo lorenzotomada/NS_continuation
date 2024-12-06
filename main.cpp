@@ -1,14 +1,13 @@
 /* -----------------------------------------------------------------------------
- COSE DA FARE:
-    IN ORDINE:
-      0) Modificare condizioni Dirichlet inlet
-      1) Debuggare triangolazione 2D
-      2) Supporto per triangolazione 3D
-      3) Testare per mu = 0.5
-      4) Implementare con metodo di Netwon
-      5) Trovare initial guess per Newton nel caso della biforcazione (steady NS)
-      6) Mettere criterio di stop su distanza relativa tra iterazioni
-      7) Con e senza adaptive mesh refinement: come cambia?
+ TODO: ideally in this order
+    0) Change BCs of the initial condition ?
+    1) Test for known values of mu (e.g. mu = 0.5)
+    2) Netwon's method (+ preconditioner?)
+    3) Relative distance between iterations as stopping criterion
+    4) Various changes: pass variables to the constructor, maybe file for data as in step-35, ...
+    5) Continuation algorithm!
+    6) Find suitable initial guess for Newton's method (start from steady NS)
+    7) What changes using mesh refinement?
  * ------------------------------------------------------------------------------ */
 
 #include <deal.II/base/function.h>
@@ -71,26 +70,27 @@ namespace coanda
 {
   using namespace dealii;
 
+
   ////////// TIME CLASS //////////
+
+
   class Time
   {
   public:
-    Time(const double time_end,
-         const double delta_t,
-         const double output_interval,
-         const double refinement_interval)
+    Time(const double time_end, const double delta_t, const double output_interval, const double refinement_interval)
       : timestep(0),
         time_current(0.0),
         time_end(time_end),
         delta_t(delta_t),
         output_interval(output_interval),
         refinement_interval(refinement_interval)
-    {
-    }
+    {}
+
     double current() const { return time_current; }
     double end() const { return time_end; }
     double get_delta_t() const { return delta_t; }
     unsigned int get_timestep() const { return timestep; }
+
     bool time_to_output() const;
     bool time_to_refine() const;
     void increment();
@@ -105,7 +105,7 @@ namespace coanda
   };
 
 
-  ///////// TIME_TO_OUTPUT //////////
+  ///////// TIME UTILITIES //////////
 
 
   bool Time::time_to_output() const
@@ -135,8 +135,8 @@ namespace coanda
   {
   public:
     BoundaryValues() : Function<dim>(dim + 1) {}
-    virtual double value(const Point<dim> &p, const unsigned int component) const override;
 
+    virtual double value(const Point<dim> &p, const unsigned int component) const override;
     virtual void vector_value(const Point<dim> &p, Vector<double> &values) const override;
   };
 
@@ -150,20 +150,27 @@ namespace coanda
     Assert(component < this->n_components, ExcIndexRange(component, 0, this->n_components));
     double left_boundary = 0;
     if (component == 0 && std::abs(p[0] - left_boundary) < 1e-10)
+    {
+      double p1{p[1]};
+      double value{20*(p1-2.5)*(5-p1)};
+      if (dim == 3)
       {
-        double p1 = p[1];
-        double value = 20*(p1-2.5)*(5-p1);
-        if (dim == 3) { value = 0; /* TODO */}
-        return value;
+        double p2{p[2]};
+        value*=((p2-2.5)*(5-p2));
+        double normalization_constant{0.5}; /* to leave the Reynolds number unchanged. The max inlet velocities doubles, so we need to rescale */
+        value*=normalization_constant;
       }
+      return value;
+    }
     return 0;
   }
 
+
+
+
   template <int dim>
-  void BoundaryValues<dim>::vector_value(const Point<dim> &p, Vector<double> &values) const
-  {
-    for (unsigned int c = 0; c < this->n_components; ++c) { values(c) = BoundaryValues<dim>::value(p, c); }
-  }
+  void BoundaryValues<dim>::vector_value(const Point<dim> &p, Vector<double> &values) const 
+  { for (unsigned int c = 0; c < this->n_components; ++c) { values(c) = BoundaryValues<dim>::value(p, c); } }
 
   
   class BlockSchurPreconditioner : public Subscriptor
@@ -187,25 +194,11 @@ namespace coanda
     const double viscosity;
     const double dt;
 
-    const SmartPointer<const PETScWrappers::MPI::BlockSparseMatrix>
-      system_matrix;
+    const SmartPointer<const PETScWrappers::MPI::BlockSparseMatrix> system_matrix;
     const SmartPointer<const PETScWrappers::MPI::BlockSparseMatrix> mass_matrix;
-    // As discussed, ${[B(diag(M_u))^{-1}B^T]}$ and its inverse
-    // need to be computed.
-    // We can either explicitly compute it out as a matrix, or define
-    // it as a class with a vmult operation.
-    // The second approach saves some computation to construct the matrix,
-    // but leads to slow convergence in CG solver because it is impossible
-    // to apply a preconditioner. We go with the first route.
     const SmartPointer<PETScWrappers::MPI::BlockSparseMatrix> mass_schur;
   };
 
-  // @sect4{BlockSchurPreconditioner::BlockSchurPreconditioner}
-  //
-  // Input parameters and system matrix, mass matrix as well as the mass schur
-  // matrix are needed in the preconditioner. In addition, we pass the
-  // partitioning information into this class because we need to create some
-  // temporary block vectors inside.
   BlockSchurPreconditioner::BlockSchurPreconditioner(
     TimerOutput &timer,
     double gamma,
@@ -238,11 +231,6 @@ namespace coanda
       mass_schur->block(1, 1), system_matrix->block(0, 1), tmp2.block(0));
   }
 
-  // @sect4{BlockSchurPreconditioner::vmult}
-  //
-  // The vmult operation strictly follows the definition of
-  // BlockSchurPreconditioner
-  // introduced above. Conceptually it computes $u = P^{-1}v$.
   void BlockSchurPreconditioner::vmult(
     PETScWrappers::MPI::BlockVector &dst,
     const PETScWrappers::MPI::BlockVector &src) const
@@ -340,16 +328,9 @@ namespace coanda
     PETScWrappers::MPI::BlockVector system_rhs;
 
     ConditionalOStream pcout;
-    // The IndexSets of owned velocity and pressure respectively.
     std::vector<IndexSet> owned_partitioning;
-
-    // The IndexSets of relevant velocity and pressure respectively.
     std::vector<IndexSet> relevant_partitioning;
-
-    // The IndexSet of all relevant dofs.
     IndexSet locally_relevant_dofs;
-
-    // The BlockSchurPreconditioner for the entire system.
     std::shared_ptr<BlockSchurPreconditioner> preconditioner;
 
     Time time;
@@ -362,9 +343,9 @@ namespace coanda
 
   template <int dim>
   NS<dim>::NS()
-    : n_glob_ref(3),
+    : n_glob_ref(4),
       mpi_communicator(MPI_COMM_WORLD),
-      triangulation(mpi_communicator, typename Triangulation<2>::MeshSmoothing(Triangulation<2>::smoothing_on_refinement | Triangulation<2>::smoothing_on_coarsening)),
+      triangulation(mpi_communicator, typename Triangulation<dim>::MeshSmoothing(Triangulation<dim>::smoothing_on_refinement | Triangulation<dim>::smoothing_on_coarsening)),
       viscosity(1.),
       gamma(0.1),
       degree(1),
@@ -383,15 +364,29 @@ namespace coanda
 
   template <int dim>
   void NS<dim>::make_grid(){
-    Triangulation<2> rectangle;
-    GridGenerator::hyper_rectangle(rectangle, Point<2>(0,0), Point<2>(50,7.5));
+    Triangulation<dim> rectangle;
+    if constexpr (dim == 2) { GridGenerator::hyper_rectangle(rectangle, Point<2>(0,0), Point<2>(50,7.5)); }
+    else { GridGenerator::hyper_rectangle(rectangle, Point<3>(0,0,0), Point<3>(50, 7.5, 7.5)); }
     rectangle.refine_global(n_glob_ref);
-    std::set<typename Triangulation<2>::active_cell_iterator> cells_to_remove;
-    bool inside_domain = true;
-    for (const auto &cell : rectangle.active_cell_iterators()) {
+    std::set<typename Triangulation<dim>::active_cell_iterator> cells_to_remove;
+    bool inside_domain{true};
+    for (const auto &cell : rectangle.active_cell_iterators())
+    {
       inside_domain = true;
-      for (unsigned int v = 0; v < GeometryInfo<2>::vertices_per_cell; ++v) 
-        if ((cell->vertex(v)[0]<10) && ((cell->vertex(v)[1]>5 && cell->vertex(v)[1]<7.5) || (cell->vertex(v)[1]<2.5))) { inside_domain = false; }
+      for (unsigned int v = 0; v < GeometryInfo<dim>::vertices_per_cell; ++v)
+      {
+        bool before_10_x_coord{cell->vertex(v)[0]<10};
+        bool first_check{(cell->vertex(v)[1]>5 && cell->vertex(v)[1]<7.5) || (cell->vertex(v)[1]<2.5)};
+        if constexpr (dim == 2) 
+        { 
+          if (before_10_x_coord && first_check) { inside_domain = false; /* if dim==2, it is a sufficient condition to be in the inlet */}
+        }
+        else
+        {
+          bool second_check{(cell->vertex(v)[2]>5 && cell->vertex(v)[2]<7.5) || (cell->vertex(v)[2]<2.5)};
+          if (before_10_x_coord && (first_check || second_check)) { inside_domain = false; }
+        }
+      }
       if (!inside_domain) { cells_to_remove.insert(cell); }
     }
     GridGenerator::create_triangulation_with_removed_cells(rectangle, cells_to_remove, triangulation);
@@ -406,10 +401,11 @@ namespace coanda
         }
       }
     }
-  std::ofstream out("mesh.vtk");
+  std::ofstream out("mesh_2d.vtk");
   GridOut grid_out;
   grid_out.write_vtk(triangulation, out);
 }
+
 
 
   ////////// SETUP_DOFS //////////
@@ -454,11 +450,9 @@ namespace coanda
     DoFTools::make_hanging_node_constraints(dof_handler, nonzero_constraints);
     DoFTools::make_hanging_node_constraints(dof_handler, zero_constraints);
 
-    // Apply Dirichlet boundary conditions on all boundaries except for the
-    // outlet.
+    // Apply Dirichlet boundary conditions on all Dirichlet boundaries except for the outlet.
     std::vector<unsigned int> dirichlet_bc_ids;
-    if (dim == 2) { dirichlet_bc_ids = std::vector<unsigned int>{1, 4}; }
-    else {dirichlet_bc_ids = std::vector<unsigned int>{0, 2, 3, 4, 5, 6}; } // TODO
+    dirichlet_bc_ids = std::vector<unsigned int>{1, 3};
 
     const FEValuesExtractors::Vector velocities(0);
     for (auto id : dirichlet_bc_ids)

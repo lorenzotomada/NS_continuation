@@ -1,9 +1,10 @@
 /* -----------------------------------------------------------------------------
  TODO: ideally in this order
-    0) Change BCs of the initial condition ?
-    1) Test for known values of mu (e.g. mu = 0.5)
-    2) Netwon's method (+ preconditioner?)
-    3) Relative distance between iterations as stopping criterion
+    ( 0) Change BCs of the initial condition ? )
+
+    1) Adapt the cell stuff and test for known values of mu (e.g. mu = 0.5)
+    2) Relative distance between iterations as stopping criterion
+    3) Netwon's method (+ preconditioner?)
     4) Various changes: pass variables to the constructor, maybe file for data as in step-35, ...
     5) Continuation algorithm!
     6) Find suitable initial guess for Newton's method (start from steady NS)
@@ -248,8 +249,7 @@ namespace coanda
       // $-(\nu + \gamma)M_p^{-1}v_1$
       PETScWrappers::PreconditionBlockJacobi Mp_preconditioner;
       Mp_preconditioner.initialize(mass_matrix->block(1, 1));
-      cg_mp.solve(
-        mass_matrix->block(1, 1), tmp, src.block(1), Mp_preconditioner);
+      cg_mp.solve(mass_matrix->block(1, 1), tmp, src.block(1), Mp_preconditioner);
       tmp *= -(viscosity + gamma);
     }
     // $-\frac{1}{dt}S_m^{-1}v_1$
@@ -302,6 +302,7 @@ namespace coanda
     std::pair<unsigned int, double> solve(bool use_nonzero_constraints, bool assemble_system);
     void refine_mesh(const unsigned int, const unsigned int);
     void output_results(const unsigned int) const;
+    
     int n_glob_ref;
     MPI_Comm mpi_communicator;
     parallel::distributed::Triangulation<dim> triangulation;
@@ -343,10 +344,10 @@ namespace coanda
 
   template <int dim>
   NS<dim>::NS()
-    : n_glob_ref(4),
+    : n_glob_ref(1),
       mpi_communicator(MPI_COMM_WORLD),
       triangulation(mpi_communicator, typename Triangulation<dim>::MeshSmoothing(Triangulation<dim>::smoothing_on_refinement | Triangulation<dim>::smoothing_on_coarsening)),
-      viscosity(1.),
+      viscosity(0.5),
       gamma(0.1),
       degree(1),
       fe(FE_Q<dim>(degree + 1), dim, FE_Q<dim>(degree), 1),
@@ -363,11 +364,22 @@ namespace coanda
 
 
   template <int dim>
-  void NS<dim>::make_grid(){
-    Triangulation<dim> rectangle;
-    if constexpr (dim == 2) { GridGenerator::hyper_rectangle(rectangle, Point<2>(0,0), Point<2>(50,7.5)); }
-    else { GridGenerator::hyper_rectangle(rectangle, Point<3>(0,0,0), Point<3>(50, 7.5, 7.5)); }
+  void NS<dim>::make_grid()
+  {
+    Triangulation<dim> rectangle;    
+    if constexpr (dim == 2)
+    {
+      std::vector<unsigned int> subdivisions{50, 8};
+      GridGenerator::subdivided_hyper_rectangle(rectangle, subdivisions, Point<2>(0, 0), Point<2>(50, 7.5));
+    }
+    else
+    {
+      std::vector<unsigned int> subdivisions{50, 8, 8};
+      GridGenerator::subdivided_hyper_rectangle(rectangle, subdivisions, Point<3>(0, 0, 0), Point<3>(50, 7.5, 7.5));
+    }
+
     rectangle.refine_global(n_glob_ref);
+
     std::set<typename Triangulation<dim>::active_cell_iterator> cells_to_remove;
     bool inside_domain{true};
     for (const auto &cell : rectangle.active_cell_iterators())
@@ -456,10 +468,10 @@ namespace coanda
 
     const FEValuesExtractors::Vector velocities(0);
     for (auto id : dirichlet_bc_ids)
-      {
-        VectorTools::interpolate_boundary_values(dof_handler, id, BoundaryValues<dim>(), nonzero_constraints, fe.component_mask(velocities));
-        VectorTools::interpolate_boundary_values(dof_handler, id, Functions::ZeroFunction<dim>(dim + 1), zero_constraints, fe.component_mask(velocities));
-      }
+    {
+      VectorTools::interpolate_boundary_values(dof_handler, id, BoundaryValues<dim>(), nonzero_constraints, fe.component_mask(velocities));
+      VectorTools::interpolate_boundary_values(dof_handler, id, Functions::ZeroFunction<dim>(dim + 1), zero_constraints, fe.component_mask(velocities));
+    }
     nonzero_constraints.close();
     zero_constraints.close();
   }
@@ -502,8 +514,11 @@ namespace coanda
     system_rhs.reinit(owned_partitioning, mpi_communicator);
   }
 
-  // @sect4{InsIMEX::assemble}
-  //
+
+
+  ////////// ASSEMBLE SYSTEM //////////
+
+
   // Assemble the system matrix, mass matrix, and the RHS.
   // It can be used to assemble the entire system or only the RHS.
   // An additional option is added to determine whether nonzero
@@ -518,10 +533,10 @@ namespace coanda
     TimerOutput::Scope timer_section(timer, "Assemble system");
 
     if (assemble_system)
-      {
-        system_matrix = 0;
-        mass_matrix = 0;
-      }
+    {
+      system_matrix = 0;
+      mass_matrix = 0;
+    }
     system_rhs = 0;
 
     FEValues<dim> fe_values(fe, volume_quad_formula, update_values | update_quadrature_points | update_JxW_values | update_gradients);
@@ -549,62 +564,48 @@ namespace coanda
     std::vector<Tensor<2, dim>> grad_phi_u(dofs_per_cell);
     std::vector<double> phi_p(dofs_per_cell);
 
-    for (auto cell = dof_handler.begin_active(); cell != dof_handler.end();
-         ++cell)
+    for (auto cell = dof_handler.begin_active(); cell != dof_handler.end(); ++cell)
+    {
+      if (cell->is_locally_owned())
       {
-        if (cell->is_locally_owned())
+        fe_values.reinit(cell);
+        if (assemble_system)
+        {
+          local_matrix = 0;
+          local_mass_matrix = 0;
+        }
+        local_rhs = 0;
+
+        fe_values[velocities].get_function_values(present_solution, current_velocity_values);
+        fe_values[velocities].get_function_gradients(present_solution, current_velocity_gradients);
+        fe_values[velocities].get_function_divergences(present_solution, current_velocity_divergences);
+        fe_values[pressure].get_function_values(present_solution, current_pressure_values);
+
+        // Assemble the system matrix and mass matrix simultaneouly.
+        // The mass matrix only uses the $(0, 0)$ and $(1, 1)$ blocks.
+        for (unsigned int q = 0; q < n_q_points; ++q)
+        {
+          for (unsigned int k = 0; k < dofs_per_cell; ++k)
           {
-            fe_values.reinit(cell);
+            div_phi_u[k] = fe_values[velocities].divergence(k, q);
+            grad_phi_u[k] = fe_values[velocities].gradient(k, q);
+            phi_u[k] = fe_values[velocities].value(k, q);
+            phi_p[k] = fe_values[pressure].value(k, q);
+          }
 
-            if (assemble_system)
+          for (unsigned int i = 0; i < dofs_per_cell; ++i)
+            {
+              if (assemble_system)
               {
-                local_matrix = 0;
-                local_mass_matrix = 0;
+                for (unsigned int j = 0; j < dofs_per_cell; ++j)
+                {
+                  local_matrix(i, j) += (viscosity * scalar_product(grad_phi_u[j], grad_phi_u[i]) - div_phi_u[i] * phi_p[j] - phi_p[i] * div_phi_u[j] +
+                              gamma * div_phi_u[j] * div_phi_u[i] + phi_u[i] * phi_u[j] / time.get_delta_t()) * fe_values.JxW(q);
+                            local_mass_matrix(i, j) += (phi_u[i] * phi_u[j] + phi_p[i] * phi_p[j]) * fe_values.JxW(q);
+                }
               }
-            local_rhs = 0;
-
-            fe_values[velocities].get_function_values(present_solution, current_velocity_values);
-
-            fe_values[velocities].get_function_gradients(present_solution, current_velocity_gradients);
-
-            fe_values[velocities].get_function_divergences(present_solution, current_velocity_divergences);
-
-            fe_values[pressure].get_function_values(present_solution, current_pressure_values);
-
-            // Assemble the system matrix and mass matrix simultaneouly.
-            // The mass matrix only uses the $(0, 0)$ and $(1, 1)$ blocks.
-            for (unsigned int q = 0; q < n_q_points; ++q)
-              {
-                for (unsigned int k = 0; k < dofs_per_cell; ++k)
-                  {
-                    div_phi_u[k] = fe_values[velocities].divergence(k, q);
-                    grad_phi_u[k] = fe_values[velocities].gradient(k, q);
-                    phi_u[k] = fe_values[velocities].value(k, q);
-                    phi_p[k] = fe_values[pressure].value(k, q);
-                  }
-
-                for (unsigned int i = 0; i < dofs_per_cell; ++i)
-                  {
-                    if (assemble_system)
-                      {
-                        for (unsigned int j = 0; j < dofs_per_cell; ++j)
-                          {
-                            local_matrix(i, j) +=
-                              (viscosity *
-                                 scalar_product(grad_phi_u[j], grad_phi_u[i]) -
-                               div_phi_u[i] * phi_p[j] -
-                               phi_p[i] * div_phi_u[j] +
-                               gamma * div_phi_u[j] * div_phi_u[i] +
-                               phi_u[i] * phi_u[j] / time.get_delta_t()) *
-                              fe_values.JxW(q);
-                            local_mass_matrix(i, j) +=
-                              (phi_u[i] * phi_u[j] + phi_p[i] * phi_p[j]) *
-                              fe_values.JxW(q);
-                          }
-                      }
-                    local_rhs(i) -=
-                      (viscosity * scalar_product(current_velocity_gradients[q],
-                                                  grad_phi_u[i]) -
+              local_rhs(i) -=
+                      (viscosity * scalar_product(current_velocity_gradients[q], grad_phi_u[i]) -
                        current_velocity_divergences[q] * phi_p[i] -
                        current_pressure_values[q] * div_phi_u[i] +
                        gamma * current_velocity_divergences[q] * div_phi_u[i] +
@@ -627,96 +628,87 @@ namespace coanda
       }
 
     if (assemble_system)
-      {
-        system_matrix.compress(VectorOperation::add);
-        mass_matrix.compress(VectorOperation::add);
-      }
+    {
+      system_matrix.compress(VectorOperation::add);
+      mass_matrix.compress(VectorOperation::add);
+    }
     system_rhs.compress(VectorOperation::add);
   }
 
-  // @sect4{InsIMEX::solve}
-  // Solve the linear system using FGMRES solver with block preconditioner.
-  // After solving the linear system, the same AffineConstraints object as used
-  // in assembly must be used again, to set the constrained value.
-  // The second argument is used to determine whether the block
-  // preconditioner should be reset or not.
+
+
   template <int dim>
   std::pair<unsigned int, double>
   NS<dim>::solve(bool use_nonzero_constraints, bool assemble_system)
   {
-    if (assemble_system)
-      {
-        preconditioner.reset(new BlockSchurPreconditioner(timer, gamma, viscosity, time.get_delta_t(), owned_partitioning,
-                                                          system_matrix, mass_matrix, mass_schur));
-      }
+    if (assemble_system) { preconditioner.reset(new BlockSchurPreconditioner(timer, gamma, viscosity, time.get_delta_t(), owned_partitioning, system_matrix, mass_matrix, mass_schur)); }
 
-    SolverControl solver_control(
-      system_matrix.m(), 1e-8 * system_rhs.l2_norm(), true);
-    // Because PETScWrappers::SolverGMRES only accepts preconditioner
-    // derived from PETScWrappers::PreconditionBase,
-    // we use dealii SolverFGMRES.
+    SolverControl solver_control(system_matrix.m(), 1e-8 * system_rhs.l2_norm(), true);
     GrowingVectorMemory<PETScWrappers::MPI::BlockVector> vector_memory;
     SolverFGMRES<PETScWrappers::MPI::BlockVector> gmres(solver_control, vector_memory);
 
-    // The solution vector must be non-ghosted
     gmres.solve(system_matrix, solution_increment, system_rhs, *preconditioner);
 
-    const AffineConstraints<double> &constraints_used =
-      use_nonzero_constraints ? nonzero_constraints : zero_constraints;
+    const AffineConstraints<double> &constraints_used = use_nonzero_constraints ? nonzero_constraints : zero_constraints;
     constraints_used.distribute(solution_increment);
 
     return {solver_control.last_step(), solver_control.last_value()};
   }
 
-  // @sect4{InsIMEX::run}
+
+  ////////// RUN //////////
+
+
   template <int dim>
   void NS<dim>::run()
   {
     pcout << "Running with PETSc on " << Utilities::MPI::n_mpi_processes(mpi_communicator) << " MPI rank(s)..." << std::endl;
-    //triangulation.refine_global(0);
     setup_dofs();
     make_constraints();
     initialize_system();
 
     // Time loop.
     bool refined = false;
-    while (time.end() - time.current() > 1e-12)
+    bool should_stop = false;
+    while ((time.end() - time.current() > 1e-12) /*&& (!should_stop)*/)
+    {
+      if (time.get_timestep() == 0) { output_results(0); }
+      time.increment();
+      std::cout.precision(6);
+      std::cout.width(12);
+      pcout << std::string(96, '*') << std::endl << "Time step = " << time.get_timestep() << ", at t = " << std::scientific << time.current() << std::endl;
+      // Resetting
+      solution_increment = 0;
+      // Only use nonzero constraints at the very first time step
+      bool apply_nonzero_constraints = (time.get_timestep() == 1);
+      // We have to assemble the LHS for the initial two time steps:
+      // once using nonzero_constraints, once using zero_constraints,
+      // as well as the steps immediately after mesh refinement.
+      bool assemble_system = (time.get_timestep() < 3 || refined);
+      refined = false;
+      assemble(apply_nonzero_constraints, assemble_system);
+      auto state = solve(apply_nonzero_constraints, assemble_system);
+      // Note we have to use a non-ghosted vector to do the addition.
+      PETScWrappers::MPI::BlockVector tmp;
+      tmp.reinit(owned_partitioning, mpi_communicator);
+      tmp = present_solution;
+      tmp += solution_increment;
+      present_solution = tmp;
+      pcout << std::scientific << std::left << " GMRES_ITR = " << std::setw(3) << state.first << " GMRES_RES = " << state.second << std::endl;
+      // Output
+      if (time.time_to_output()) { output_results(time.get_timestep()); }
+      if (time.time_to_refine())
       {
-        if (time.get_timestep() == 0) { output_results(0); }
-        time.increment();
-        std::cout.precision(6);
-        std::cout.width(12);
-        pcout << std::string(96, '*') << std::endl << "Time step = " << time.get_timestep() << ", at t = " << std::scientific << time.current() << std::endl;
-        // Resetting
-        solution_increment = 0;
-        // Only use nonzero constraints at the very first time step
-        bool apply_nonzero_constraints = (time.get_timestep() == 1);
-        // We have to assemble the LHS for the initial two time steps:
-        // once using nonzero_constraints, once using zero_constraints,
-        // as well as the steps immediately after mesh refinement.
-        bool assemble_system = (time.get_timestep() < 3 || refined);
-        refined = false;
-        assemble(apply_nonzero_constraints, assemble_system);
-        auto state = solve(apply_nonzero_constraints, assemble_system);
-        // Note we have to use a non-ghosted vector to do the addition.
-        PETScWrappers::MPI::BlockVector tmp;
-        tmp.reinit(owned_partitioning, mpi_communicator);
-        tmp = present_solution;
-        tmp += solution_increment;
-        present_solution = tmp;
-        pcout << std::scientific << std::left << " GMRES_ITR = " << std::setw(3) << state.first << " GMRES_RES = " << state.second << std::endl;
-        // Output
-        if (time.time_to_output()) { output_results(time.get_timestep()); }
-        if (time.time_to_refine())
-          {
-            refine_mesh(0, 4);
-            refined = true;
-          }
+        refine_mesh(0, 4);
+        refined = true;
       }
+    }
   }
 
-  // @sect4{InsIMEX::output_result}
-  //
+
+////////// OUTPUT RESULTS //////////
+
+
   template <int dim>
   void NS<dim>::output_results(const unsigned int output_index) const
   {
@@ -725,8 +717,7 @@ namespace coanda
     std::vector<std::string> solution_names(dim, "velocity");
     solution_names.push_back("pressure");
 
-    std::vector<DataComponentInterpretation::DataComponentInterpretation>
-      data_component_interpretation(dim, DataComponentInterpretation::component_is_part_of_vector);
+    std::vector<DataComponentInterpretation::DataComponentInterpretation> data_component_interpretation(dim, DataComponentInterpretation::component_is_part_of_vector);
     data_component_interpretation.push_back(DataComponentInterpretation::component_is_scalar);
     DataOut<dim> data_out;
     data_out.attach_dof_handler(dof_handler);
@@ -735,35 +726,29 @@ namespace coanda
 
     // Partition
     Vector<float> subdomain(triangulation.n_active_cells());
-    for (unsigned int i = 0; i < subdomain.size(); ++i)
-      { subdomain(i) = triangulation.locally_owned_subdomain(); }
+    for (unsigned int i = 0; i < subdomain.size(); ++i) { subdomain(i) = triangulation.locally_owned_subdomain(); }
     data_out.add_data_vector(subdomain, "subdomain");
-
     data_out.build_patches(degree + 1);
 
-    std::string basename =
-      "navierstokes" + Utilities::int_to_string(output_index, 6) + "-";
-
-    std::string filename =
-      basename + Utilities::int_to_string(triangulation.locally_owned_subdomain(), 4) + ".vtu";
+    std::string basename = "navierstokes" + Utilities::int_to_string(output_index, 6) + "-";
+    std::string filename = basename + Utilities::int_to_string(triangulation.locally_owned_subdomain(), 4) + ".vtu";
 
     std::ofstream output(filename);
     data_out.write_vtu(output);
 
     static std::vector<std::pair<double, std::string>> times_and_names;
     if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
-      {
-        for (unsigned int i = 0;
-             i < Utilities::MPI::n_mpi_processes(mpi_communicator);
-             ++i)
-          { times_and_names.push_back({time.current(), basename + Utilities::int_to_string(i, 4) + ".vtu"}); }
-        std::ofstream pvd_output("navierstokes.pvd");
-        DataOutBase::write_pvd_record(pvd_output, times_and_names);
-      }
+    {
+      for (unsigned int i = 0; i < Utilities::MPI::n_mpi_processes(mpi_communicator); ++i) { times_and_names.push_back({time.current(), basename + Utilities::int_to_string(i, 4) + ".vtu"}); }
+      std::ofstream pvd_output("navierstokes.pvd");
+       DataOutBase::write_pvd_record(pvd_output, times_and_names);
+    }
   }
 
-  // @sect4{InsIMEX::refine_mesh}
-  //
+ 
+ ////////// REFINE MESH //////////
+
+
   template <int dim>
   void NS<dim>::refine_mesh(const unsigned int min_grid_level, const unsigned int max_grid_level)
   {
@@ -776,22 +761,14 @@ namespace coanda
     parallel::distributed::GridRefinement::refine_and_coarsen_fixed_fraction(
       triangulation, estimated_error_per_cell, 0.6, 0.4);
     if (triangulation.n_levels() > max_grid_level)
-      {
-        for (auto cell = triangulation.begin_active(max_grid_level); cell != triangulation.end(); ++cell)
-          { cell->clear_refine_flag(); }
-      }
-    for (auto cell = triangulation.begin_active(min_grid_level); cell != triangulation.end_active(min_grid_level); ++cell)
-      { cell->clear_coarsen_flag(); }
-
-    // Prepare to transfer
-    parallel::distributed::SolutionTransfer<dim, PETScWrappers::MPI::BlockVector>
-      trans(dof_handler);
+    {
+      for (auto cell = triangulation.begin_active(max_grid_level); cell != triangulation.end(); ++cell) { cell->clear_refine_flag(); }
+    }
+    for (auto cell = triangulation.begin_active(min_grid_level); cell != triangulation.end_active(min_grid_level); ++cell) { cell->clear_coarsen_flag(); }
+    parallel::distributed::SolutionTransfer<dim, PETScWrappers::MPI::BlockVector> trans(dof_handler);
 
     triangulation.prepare_coarsening_and_refinement();
-
     trans.prepare_for_coarsening_and_refinement(present_solution);
-
-    // Refine the mesh
     triangulation.execute_coarsening_and_refinement();
 
     // Reinitialize the system
@@ -820,8 +797,8 @@ int main(int argc, char *argv[])
       using namespace coanda;
 
       Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
-      NS<2> flow{};
-      flow.run();
+      NS<2> bifurc_NS{};
+      bifurc_NS.run();
     }
   catch (std::exception &exc)
     {

@@ -1,14 +1,10 @@
 /* -----------------------------------------------------------------------------
  TODO: ideally in this order
-    ( 0) Change BCs of the initial condition ? )
-
-    1) Adapt the cell stuff and test for known values of mu (e.g. mu = 0.5)
-    2) Relative distance between iterations as stopping criterion
+    1) Test for known values of mu (e.g. mu = 0.5)
+    2) VTK output
     3) Netwon's method (+ preconditioner?)
-    4) Various changes: pass variables to the constructor, maybe file for data as in step-35, ...
-    5) Continuation algorithm!
-    6) Find suitable initial guess for Newton's method (start from steady NS)
-    7) What changes using mesh refinement?
+    4) Continuation algorithm!
+    5) Find suitable initial guess for Newton's method (start from steady NS)
  * ------------------------------------------------------------------------------ */
 
 #include <deal.II/base/function.h>
@@ -72,7 +68,9 @@ namespace coanda
   using namespace dealii;
 
 
+
   ////////// TIME CLASS //////////
+
 
 
   class Time
@@ -106,7 +104,9 @@ namespace coanda
   };
 
 
+
   ///////// TIME UTILITIES //////////
+
 
 
   bool Time::time_to_output() const
@@ -128,7 +128,9 @@ namespace coanda
   }
 
 
+
   ////////// DBCs //////////
+
 
 
   template <int dim>
@@ -142,8 +144,10 @@ namespace coanda
   };
 
 
-  ////////// BOUNDARYVALUES VALUE FUNCTION //////////
+
+  ////////// BOUNDARY VALUES VALUE FUNCTION //////////
   
+
 
   template <int dim>
   double BoundaryValues<dim>::value(const Point<dim> &p, const unsigned int component) const
@@ -168,12 +172,20 @@ namespace coanda
 
 
 
+ ////////// BOUNDARY VALUES VECTOR VALUE //////////
+
+
 
   template <int dim>
   void BoundaryValues<dim>::vector_value(const Point<dim> &p, Vector<double> &values) const 
   { for (unsigned int c = 0; c < this->n_components; ++c) { values(c) = BoundaryValues<dim>::value(p, c); } }
 
   
+
+  ////////// BLOCK SCHUR PRECONDITIONER //////////
+
+
+
   class BlockSchurPreconditioner : public Subscriptor
   {
   public:
@@ -228,8 +240,7 @@ namespace coanda
     // this is exactly what we want to compute.
     PETScWrappers::PreconditionJacobi jacobi(mass_matrix->block(0, 0));
     jacobi.vmult(tmp2.block(0), tmp1.block(0));
-    system_matrix->block(1, 0).mmult(
-      mass_schur->block(1, 1), system_matrix->block(0, 1), tmp2.block(0));
+    system_matrix->block(1, 0).mmult(mass_schur->block(1, 1), system_matrix->block(0, 1), tmp2.block(0));
   }
 
   void BlockSchurPreconditioner::vmult(
@@ -282,14 +293,16 @@ namespace coanda
   }
 
 
+
   ////////// NS CLASS //////////
+
 
 
   template <int dim>
   class NS
   {
   public:
-    NS();
+    NS(const unsigned int fe_degree, double stopping_criterion);
     void run();
     ~NS() { timer.print_summary(); }
 
@@ -308,7 +321,8 @@ namespace coanda
     parallel::distributed::Triangulation<dim> triangulation;
     double viscosity;
     double gamma;
-    const unsigned int degree;
+    const unsigned int fe_degree;
+    double stopping_criterion;
 
     std::vector<types::global_dof_index> dofs_per_block;
 
@@ -325,6 +339,7 @@ namespace coanda
     PETScWrappers::MPI::BlockSparseMatrix mass_matrix;
     PETScWrappers::MPI::BlockSparseMatrix mass_schur;
     PETScWrappers::MPI::BlockVector present_solution;
+    PETScWrappers::MPI::BlockVector old_solution;
     PETScWrappers::MPI::BlockVector solution_increment;
     PETScWrappers::MPI::BlockVector system_rhs;
 
@@ -343,17 +358,18 @@ namespace coanda
 
 
   template <int dim>
-  NS<dim>::NS()
+  NS<dim>::NS(const unsigned int fe_degree, double stopping_criterion)
     : n_glob_ref(1),
       mpi_communicator(MPI_COMM_WORLD),
       triangulation(mpi_communicator, typename Triangulation<dim>::MeshSmoothing(Triangulation<dim>::smoothing_on_refinement | Triangulation<dim>::smoothing_on_coarsening)),
       viscosity(0.5),
       gamma(0.1),
-      degree(1),
-      fe(FE_Q<dim>(degree + 1), dim, FE_Q<dim>(degree), 1),
+      fe_degree(fe_degree),
+      stopping_criterion(stopping_criterion),
+      fe(FE_Q<dim>(fe_degree + 1), dim, FE_Q<dim>(fe_degree), 1),
       dof_handler(triangulation),
-      volume_quad_formula(degree + 2),
-      face_quad_formula(degree + 2),
+      volume_quad_formula(fe_degree + 2),
+      face_quad_formula(fe_degree + 2),
       pcout(std::cout, Utilities::MPI::this_mpi_process(mpi_communicator) == 0),
       time(2*1e1, 1e-3, 1e-2, 1e-2),
       timer(mpi_communicator, pcout, TimerOutput::never, TimerOutput::wall_times)
@@ -367,8 +383,8 @@ namespace coanda
   void NS<dim>::make_grid()
   {
     Triangulation<dim> rectangle;    
-    if constexpr (dim == 2)
-    {
+    if constexpr (dim == 2) // Checking with constexpr because it is known already at compile-time
+    {  /* To create the mesh, we use subdivided_hyper_rectangle instead of hyper_rectangle because the latter yielded cells which were too deformed */
       std::vector<unsigned int> subdivisions{50, 8};
       GridGenerator::subdivided_hyper_rectangle(rectangle, subdivisions, Point<2>(0, 0), Point<2>(50, 7.5));
     }
@@ -423,6 +439,7 @@ namespace coanda
   ////////// SETUP_DOFS //////////
 
 
+
   template <int dim>
   void NS<dim>::setup_dofs()
   {
@@ -449,7 +466,12 @@ namespace coanda
     pcout << "   Number of active fluid cells: " << triangulation.n_global_active_cells() << std::endl << "   Number of degrees of freedom: " << dof_handler.n_dofs() << " (" << dof_u << '+' << dof_p << ')' << std::endl;
   }
 
-  // @sect4{InsIMEX::make_constraints}
+
+
+  ////////// MAKE CONSTRAINTS //////////
+
+
+
   template <int dim>
   void NS<dim>::make_constraints()
   {
@@ -506,6 +528,7 @@ namespace coanda
     // present_solution is ghosted because it is used in the
     // output and mesh refinement functions.
     present_solution.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
+    old_solution.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
     // solution_increment is non-ghosted because the linear solver needs
     // a completely distributed vector.
     solution_increment.reinit(owned_partitioning, mpi_communicator);
@@ -594,38 +617,35 @@ namespace coanda
           }
 
           for (unsigned int i = 0; i < dofs_per_cell; ++i)
+          {
+            if (assemble_system)
             {
-              if (assemble_system)
+              for (unsigned int j = 0; j < dofs_per_cell; ++j)
               {
-                for (unsigned int j = 0; j < dofs_per_cell; ++j)
-                {
-                  local_matrix(i, j) += (viscosity * scalar_product(grad_phi_u[j], grad_phi_u[i]) - div_phi_u[i] * phi_p[j] - phi_p[i] * div_phi_u[j] +
+                local_matrix(i, j) += (viscosity * scalar_product(grad_phi_u[j], grad_phi_u[i]) - div_phi_u[i] * phi_p[j] - phi_p[i] * div_phi_u[j] +
                               gamma * div_phi_u[j] * div_phi_u[i] + phi_u[i] * phi_u[j] / time.get_delta_t()) * fe_values.JxW(q);
                             local_mass_matrix(i, j) += (phi_u[i] * phi_u[j] + phi_p[i] * phi_p[j]) * fe_values.JxW(q);
-                }
               }
-              local_rhs(i) -=
+            }
+            local_rhs(i) -=
                       (viscosity * scalar_product(current_velocity_gradients[q], grad_phi_u[i]) -
-                       current_velocity_divergences[q] * phi_p[i] -
-                       current_pressure_values[q] * div_phi_u[i] +
+                       current_velocity_divergences[q] * phi_p[i] - current_pressure_values[q] * div_phi_u[i] +
                        gamma * current_velocity_divergences[q] * div_phi_u[i] +
-                       current_velocity_gradients[q] *
-                         current_velocity_values[q] * phi_u[i]) *
-                      fe_values.JxW(q);
-                  }
-              }
-
-            cell->get_dof_indices(local_dof_indices);
-
-            const AffineConstraints<double> &constraints_used = use_nonzero_constraints ? nonzero_constraints : zero_constraints;
-            if (assemble_system)
-              {
-                constraints_used.distribute_local_to_global(local_matrix, local_rhs, local_dof_indices, system_matrix, system_rhs);
-                constraints_used.distribute_local_to_global(local_mass_matrix, local_dof_indices, mass_matrix);
-              }
-            else { constraints_used.distribute_local_to_global(local_rhs, local_dof_indices, system_rhs); }
+                       current_velocity_gradients[q] * current_velocity_values[q] * phi_u[i]) * fe_values.JxW(q);
           }
+        }
+
+        cell->get_dof_indices(local_dof_indices);
+
+        const AffineConstraints<double> &constraints_used = use_nonzero_constraints ? nonzero_constraints : zero_constraints;
+        if (assemble_system)
+        {
+          constraints_used.distribute_local_to_global(local_matrix, local_rhs, local_dof_indices, system_matrix, system_rhs);
+          constraints_used.distribute_local_to_global(local_mass_matrix, local_dof_indices, mass_matrix);
+        }
+        else { constraints_used.distribute_local_to_global(local_rhs, local_dof_indices, system_rhs); }
       }
+    }
 
     if (assemble_system)
     {
@@ -634,6 +654,10 @@ namespace coanda
     }
     system_rhs.compress(VectorOperation::add);
   }
+
+
+
+  ////////// SOLVE NS SYSTEM ///////////
 
 
 
@@ -656,7 +680,9 @@ namespace coanda
   }
 
 
+
   ////////// RUN //////////
+
 
 
   template <int dim>
@@ -670,13 +696,16 @@ namespace coanda
     // Time loop.
     bool refined = false;
     bool should_stop = false;
-    while ((time.end() - time.current() > 1e-12) /*&& (!should_stop)*/)
+    while ((time.end() - time.current() > 1e-12) && (!should_stop))
     {
-      if (time.get_timestep() == 0) { output_results(0); }
+      if (time.get_timestep() == 0)
+      { output_results(0); }
+
       time.increment();
       std::cout.precision(6);
       std::cout.width(12);
       pcout << std::string(96, '*') << std::endl << "Time step = " << time.get_timestep() << ", at t = " << std::scientific << time.current() << std::endl;
+      
       // Resetting
       solution_increment = 0;
       // Only use nonzero constraints at the very first time step
@@ -689,17 +718,31 @@ namespace coanda
       assemble(apply_nonzero_constraints, assemble_system);
       auto state = solve(apply_nonzero_constraints, assemble_system);
       // Note we have to use a non-ghosted vector to do the addition.
+
       PETScWrappers::MPI::BlockVector tmp;
+
       tmp.reinit(owned_partitioning, mpi_communicator);
+      old_solution.reinit(owned_partitioning, mpi_communicator);
+      
       tmp = present_solution;
+      old_solution = present_solution;
+
       tmp += solution_increment;
       present_solution = tmp;
+
       pcout << std::scientific << std::left << " GMRES_ITR = " << std::setw(3) << state.first << " GMRES_RES = " << state.second << std::endl;
       // Output
       if (time.time_to_output()) { output_results(time.get_timestep()); }
       if (time.time_to_refine())
       {
-        refine_mesh(0, 4);
+        double old_u_norm = old_solution.block(0).l2_norm();
+        double u_increment_norm = solution_increment.block(0).l2_norm();
+        double norm_increment = u_increment_norm/old_u_norm; // this could be inf, but no error is thrown
+
+        if (norm_increment < stopping_criterion) { should_stop = true; }
+        pcout << " The relative distance between the two iterations is " << norm_increment << std::endl;
+    
+        refine_mesh(0, 2);
         refined = true;
       }
     }
@@ -728,7 +771,7 @@ namespace coanda
     Vector<float> subdomain(triangulation.n_active_cells());
     for (unsigned int i = 0; i < subdomain.size(); ++i) { subdomain(i) = triangulation.locally_owned_subdomain(); }
     data_out.add_data_vector(subdomain, "subdomain");
-    data_out.build_patches(degree + 1);
+    data_out.build_patches(fe_degree + 1);
 
     std::string basename = "navierstokes" + Utilities::int_to_string(output_index, 6) + "-";
     std::string filename = basename + Utilities::int_to_string(triangulation.locally_owned_subdomain(), 4) + ".vtu";
@@ -741,12 +784,13 @@ namespace coanda
     {
       for (unsigned int i = 0; i < Utilities::MPI::n_mpi_processes(mpi_communicator); ++i) { times_and_names.push_back({time.current(), basename + Utilities::int_to_string(i, 4) + ".vtu"}); }
       std::ofstream pvd_output("navierstokes.pvd");
-       DataOutBase::write_pvd_record(pvd_output, times_and_names);
+      DataOutBase::write_pvd_record(pvd_output, times_and_names);
     }
   }
 
  
  ////////// REFINE MESH //////////
+
 
 
   template <int dim>
@@ -791,26 +835,29 @@ namespace coanda
 
 int main(int argc, char *argv[])
 {
-  try
-    {
-      using namespace dealii;
-      using namespace coanda;
+  try {
+    using namespace dealii;
+    using namespace coanda;
 
-      Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
-      NS<2> bifurc_NS{};
-      bifurc_NS.run();
-    }
+    Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
+    
+    const unsigned int fe_degree{2};
+    double stopping_criterion{1e-7};
+    
+    NS<2> bifurc_NS{fe_degree, stopping_criterion};
+    bifurc_NS.run();
+  }
   catch (std::exception &exc)
-    {
-      std::cerr << std::endl << std::endl << "----------------------------------------------------" << std::endl;
-      std::cerr << "Exception on processing: " << std::endl << exc.what() << std::endl << "Aborting!" << std::endl << "----------------------------------------------------" << std::endl;
-      return 1;
-    }
+  {
+    std::cerr << std::endl << std::endl << "----------------------------------------------------" << std::endl;
+    std::cerr << "Exception on processing: " << std::endl << exc.what() << std::endl << "Aborting!" << std::endl << "----------------------------------------------------" << std::endl;
+    return 1;
+  }
   catch (...)
-    {
-      std::cerr << std::endl << std::endl << "----------------------------------------------------" << std::endl;
-      std::cerr << "Unknown exception!" << std::endl << "Aborting!" << std::endl << "----------------------------------------------------" << std::endl;
-      return 1;
-    }
+  {
+    std::cerr << std::endl << std::endl << "----------------------------------------------------" << std::endl;
+    std::cerr << "Unknown exception!" << std::endl << "Aborting!" << std::endl << "----------------------------------------------------" << std::endl;
+    return 1;
+  }
   return 0;
 }

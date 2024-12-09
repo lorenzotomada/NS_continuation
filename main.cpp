@@ -1,10 +1,9 @@
 /* -----------------------------------------------------------------------------
  TODO: ideally in this order
     1) Test for known values of mu (e.g. mu = 0.5)
-    2) VTK output
-    3) Netwon's method (+ preconditioner?)
-    4) Continuation algorithm!
-    5) Find suitable initial guess for Newton's method (start from steady NS)
+    2) Netwon's method (+ preconditioner?)
+    3) Continuation algorithm
+    4) Find suitable initial guess for Newton's method (start from steady NS)
  * ------------------------------------------------------------------------------ */
 
 #include <deal.II/base/function.h>
@@ -115,11 +114,13 @@ namespace coanda
     return (timestep >= delta && timestep % delta == 0);
   }
 
+
   bool Time::time_to_refine() const
   {
     unsigned int delta = static_cast<unsigned int>(refinement_interval / delta_t);
     return (timestep >= delta && timestep % delta == 0);
   }
+
 
   void Time::increment()
   {
@@ -302,7 +303,7 @@ namespace coanda
   class NS
   {
   public:
-    NS(const unsigned int fe_degree, double stopping_criterion);
+    NS(const bool adaptive_refinement, const unsigned int fe_degree, const double stopping_criterion);
     void run();
     ~NS() { timer.print_summary(); }
 
@@ -316,13 +317,14 @@ namespace coanda
     void refine_mesh(const unsigned int, const unsigned int);
     void output_results(const unsigned int) const;
     
+    const bool adaptive_refinement;
     int n_glob_ref;
     MPI_Comm mpi_communicator;
     parallel::distributed::Triangulation<dim> triangulation;
     double viscosity;
     double gamma;
     const unsigned int fe_degree;
-    double stopping_criterion;
+    const double stopping_criterion;
 
     std::vector<types::global_dof_index> dofs_per_block;
 
@@ -358,8 +360,9 @@ namespace coanda
 
 
   template <int dim>
-  NS<dim>::NS(const unsigned int fe_degree, double stopping_criterion)
-    : n_glob_ref(1),
+  NS<dim>::NS(const bool adaptive_refinement, const unsigned int fe_degree, const double stopping_criterion)
+    : adaptive_refinement(adaptive_refinement),
+      n_glob_ref(1),
       mpi_communicator(MPI_COMM_WORLD),
       triangulation(mpi_communicator, typename Triangulation<dim>::MeshSmoothing(Triangulation<dim>::smoothing_on_refinement | Triangulation<dim>::smoothing_on_coarsening)),
       viscosity(0.5),
@@ -742,14 +745,19 @@ namespace coanda
         if (norm_increment < stopping_criterion) { should_stop = true; }
         pcout << " The relative distance between the two iterations is " << norm_increment << std::endl;
     
-        refine_mesh(0, 2);
-        refined = true;
+        if (adaptive_refinement)
+        {
+          refine_mesh(0, 2);
+          refined = true;
+        }
       }
     }
   }
 
 
+
 ////////// OUTPUT RESULTS //////////
+
 
 
   template <int dim>
@@ -841,10 +849,11 @@ int main(int argc, char *argv[])
 
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
     
+    const bool adaptive_refinement{true};
     const unsigned int fe_degree{2};
-    double stopping_criterion{1e-7};
+    const double stopping_criterion{1e-7};
     
-    NS<2> bifurc_NS{fe_degree, stopping_criterion};
+    NS<2> bifurc_NS{adaptive_refinement, fe_degree, stopping_criterion};
     bifurc_NS.run();
   }
   catch (std::exception &exc)

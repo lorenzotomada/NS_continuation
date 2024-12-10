@@ -1,7 +1,9 @@
 /* -----------------------------------------------------------------------------
  TODO: ideally in this order
     1) Test for known values of mu (e.g. mu = 0.5)
+      1.1) Debug: relative distance computed between solutions at refinement time!
     2) Netwon's method (+ preconditioner?)
+      2.1) Constraints: use just one matrix
     3) Continuation algorithm
     4) Find suitable initial guess for Newton's method (start from steady NS)
  * ------------------------------------------------------------------------------ */
@@ -213,6 +215,7 @@ namespace coanda
     const SmartPointer<PETScWrappers::MPI::BlockSparseMatrix> mass_schur;
   };
 
+
   BlockSchurPreconditioner::BlockSchurPreconditioner(
     TimerOutput &timer,
     double gamma,
@@ -356,7 +359,9 @@ namespace coanda
   };
 
 
+
   ////////// CONSTRUCTOR //////////
+
 
 
   template <int dim>
@@ -379,7 +384,9 @@ namespace coanda
   { make_grid(); }
 
 
+
   ////////// MAKE_GRID //////////
+
 
 
   template <int dim>
@@ -502,7 +509,9 @@ namespace coanda
   }
 
 
+
   ////////// INITIALIZE_SYSTEM //////////
+
 
 
   template <int dim>
@@ -543,6 +552,7 @@ namespace coanda
 
 
   ////////// ASSEMBLE SYSTEM //////////
+
 
 
   // Assemble the system matrix, mass matrix, and the RHS.

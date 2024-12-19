@@ -1,15 +1,11 @@
 /* -----------------------------------------------------------------------------
  TODO:
     1) Netwon's method
-      1.3) Preconditioner 
-      1.4) Separate function for mesh-depending matrix and other components
-      1.5) Ideally, theta-method (or at least K-N)
-      1.6) Updating the Jacobian every few iterations and so on
+      1.1) Preconditioner 
+      1.2) Separate function for mesh-depending matrix and other components
+      1.3) Ideally, theta-method (or at least K-N)
     2) Continuation algorithm
       2.1) Start from asymmetrical initial guess: steady NS solver (maybe as a class attribute)
-      2.2) Add vector called initial_guess, then substitute a linear combination of it and the current solution in the solve method or in
-           the Newton iteration
-      2.3) Solve steady NS
     3) Perform tests
       3.1) Without mesh refinement, symmetrical mesh
       3.2) Without mesh refinement, asymmetrical mesh
@@ -341,7 +337,7 @@ namespace coanda
   class NS
   {
   public:
-    NS(const bool adaptive_refinement, const bool use_continuation, const unsigned int fe_degree, const double stopping_criterion);
+    NS(const bool adaptive_refinement, const bool use_continuation, const bool distort_mesh, const unsigned int fe_degree, const double stopping_criterion);
     void run();
     ~NS() { timer.print_summary(); }
 
@@ -363,6 +359,7 @@ namespace coanda
 
     const bool adaptive_refinement;
     const bool use_continuation;
+    const bool distort_mesh; // done following https://www.dealii.org/current/doxygen/deal.II/step_49.html
     int n_glob_ref;
     MPI_Comm mpi_communicator;
     double viscosity;
@@ -413,8 +410,10 @@ namespace coanda
 
 
   template <int dim>
-  NS<dim>::NS(const bool adaptive_refinement, const bool use_continuation, const unsigned int fe_degree, const double stopping_criterion)
-    : adaptive_refinement(adaptive_refinement), use_continuation(use_continuation)
+  NS<dim>::NS(const bool adaptive_refinement, const bool use_continuation, const bool distort_mesh, const unsigned int fe_degree, const double stopping_criterion)
+    : adaptive_refinement(adaptive_refinement),
+      use_continuation(use_continuation),
+      distort_mesh(distort_mesh),
       n_glob_ref(1),
       mpi_communicator(MPI_COMM_WORLD),
       viscosity(0.5),
@@ -511,6 +510,8 @@ namespace coanda
         }
       }
     }
+
+    if (distort_mesh) { GridTools::distort_random(0.3, triangulation, true); }
 
     std::ofstream out("mesh.vtk");
     GridOut grid_out;
@@ -620,7 +621,7 @@ namespace coanda
     evaluation_points.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
     system_rhs.reinit(owned_partitioning, mpi_communicator); // non-ghosted
     newton_update.reinit(owned_partitioning, mpi_communicator); // non-ghosted
-    initial_guess.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
+    newton_initial_guess.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
   }
 
 
@@ -860,26 +861,26 @@ namespace coanda
       {
         // Choose the initial guess for Netwon's method: either the solution at the previous time step, or a linear combination 
         // between it and an asymmetrical one
-        double guess_u_norm{initial_guess.block(0).l2_norm()};
+        double guess_u_norm{newton_initial_guess.block(0).l2_norm()};
 
         if (use_continuation && guess_u_norm!=0)
         {
           PETScWrappers::MPI::BlockVector tmp_initial_guess;
-          tmp.reinit(owned_partitioning, mpi_communicator);
+          tmp_initial_guess.reinit(owned_partitioning, mpi_communicator);
 
           tmp_initial_guess -= old_solution;
-          tmp_initial_guess += inital_guess; // initial guess - old solution
+          tmp_initial_guess += newton_initial_guess; // initial guess - old solution
 
-          double dist_from_guess{tmp_initial_guess.l2_norm();};
+          double dist_from_guess{tmp_initial_guess.l2_norm()};
           double alpha = dist_from_guess/guess_u_norm; // so that it is always in [0, 1]
 
-          evaluation_points.reinit(owned_partitioning, relevant_partitioning, mpi_communicator)
+          evaluation_points.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
           tmp_initial_guess.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
           tmp_initial_guess += old_solution; // if alpha = 0, || initial_guess - old solution || = 0, so that initial_guess = old solution
                                                  // and I should only weight it with the initial guess
                                                  // so alpha should multiply the previous solution
-          tmp_intial_guess *= alpha;
-          evaluation_points = initial_guess;  // (1-alpha)* initial_guess
+          tmp_initial_guess *= alpha;
+          evaluation_points = newton_initial_guess;  // (1-alpha)* initial_guess
           evaluation_points *= (1.0-alpha);
           evaluation_points += tmp_initial_guess; // alpha*old solution + (1-alpha)*initial_guess
         }
@@ -1106,10 +1107,12 @@ int main(int argc, char *argv[])
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
     
     const bool adaptive_refinement{true};
+    const bool initial_guess{false};
+    const bool distort_mesh{true};
     const unsigned int fe_degree{2};
     const double stopping_criterion{1e-7};
     
-    NS<2> bifurc_NS{adaptive_refinement, fe_degree, stopping_criterion};
+    NS<2> bifurc_NS{adaptive_refinement, initial_guess, distort_mesh, fe_degree, stopping_criterion};
     bifurc_NS.run();
   }
   catch (std::exception &exc)

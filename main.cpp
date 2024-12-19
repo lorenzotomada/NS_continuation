@@ -6,8 +6,10 @@
       1.5) Ideally, theta-method (or at least K-N)
       1.6) Updating the Jacobian every few iterations and so on
     2) Continuation algorithm
-      2.1) Load initial guess (the method itself)
-      2.2) Start from asymmetrical initial guess: steady NS solver (maybe as a class attribute)
+      2.1) Start from asymmetrical initial guess: steady NS solver (maybe as a class attribute)
+      2.2) Add vector called initial_guess, then substitute a linear combination of it and the current solution in the solve method or in
+           the Newton iteration
+      2.3) Solve steady NS
     3) Perform tests
       3.1) Without mesh refinement, symmetrical mesh
       3.2) Without mesh refinement, asymmetrical mesh
@@ -339,7 +341,7 @@ namespace coanda
   class NS
   {
   public:
-    NS(const bool adaptive_refinement, const unsigned int fe_degree, const double stopping_criterion);
+    NS(const bool adaptive_refinement, const bool use_continuation, const unsigned int fe_degree, const double stopping_criterion);
     void run();
     ~NS() { timer.print_summary(); }
 
@@ -360,6 +362,7 @@ namespace coanda
     
 
     const bool adaptive_refinement;
+    const bool use_continuation;
     int n_glob_ref;
     MPI_Comm mpi_communicator;
     double viscosity;
@@ -389,6 +392,7 @@ namespace coanda
     PETScWrappers::MPI::BlockVector newton_update;
     PETScWrappers::MPI::BlockVector system_rhs;
     PETScWrappers::MPI::BlockVector evaluation_points;
+    PETScWrappers::MPI::BlockVector newton_initial_guess;
   
 
     ConditionalOStream pcout;
@@ -409,8 +413,8 @@ namespace coanda
 
 
   template <int dim>
-  NS<dim>::NS(const bool adaptive_refinement, const unsigned int fe_degree, const double stopping_criterion)
-    : adaptive_refinement(adaptive_refinement),
+  NS<dim>::NS(const bool adaptive_refinement, const bool use_continuation, const unsigned int fe_degree, const double stopping_criterion)
+    : adaptive_refinement(adaptive_refinement), use_continuation(use_continuation)
       n_glob_ref(1),
       mpi_communicator(MPI_COMM_WORLD),
       viscosity(0.5),
@@ -424,12 +428,10 @@ namespace coanda
       quad_formula(fe_degree + 2),
       face_quad_formula(fe_degree + 2),
       pcout(std::cout, Utilities::MPI::this_mpi_process(mpi_communicator) == 0),
-      time(3*1e-3, 1e-3, 1e-3, 1e-3),
+      time(3, 1e-2, 1e-1, 1e-2),
       timer(mpi_communicator, pcout, TimerOutput::never, TimerOutput::wall_times)  
   {
-    pcout << "  Instantiating a NS object  " << std::endl;
     make_grid();
-    pcout << "  Done  " << std::endl;
   }
 
 
@@ -441,7 +443,6 @@ namespace coanda
   template <int dim>
   void NS<dim>::make_grid()
   {
-    pcout << "  Creating the grid  " << std::endl;
     Triangulation<dim> rectangle;   
    
     /* To create the mesh, we use subdivided_hyper_rectangle instead of hyper_rectangle because
@@ -619,6 +620,7 @@ namespace coanda
     evaluation_points.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
     system_rhs.reinit(owned_partitioning, mpi_communicator); // non-ghosted
     newton_update.reinit(owned_partitioning, mpi_communicator); // non-ghosted
+    initial_guess.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
   }
 
 
@@ -746,7 +748,7 @@ namespace coanda
       {
         mass_matrix.compress(VectorOperation::add);
         jacobian_matrix.compress(VectorOperation::add);
-        //jacobian_matrix.block(1, 1) = 0;
+        jacobian_matrix.block(1, 1) = 0;
       }
 
       system_rhs.compress(VectorOperation::add);
@@ -856,8 +858,34 @@ namespace coanda
       }
       else
       {
-        evaluation_points = present_solution;
-        if (line_search_n/3 == 0) { assemble_system(first_iteration); /* We do not update the Jacobian at each iteration to reduce the cost */ }
+        // Choose the initial guess for Netwon's method: either the solution at the previous time step, or a linear combination 
+        // between it and an asymmetrical one
+        double guess_u_norm{initial_guess.block(0).l2_norm()};
+
+        if (use_continuation && guess_u_norm!=0)
+        {
+          PETScWrappers::MPI::BlockVector tmp_initial_guess;
+          tmp.reinit(owned_partitioning, mpi_communicator);
+
+          tmp_initial_guess -= old_solution;
+          tmp_initial_guess += inital_guess; // initial guess - old solution
+
+          double dist_from_guess{tmp_initial_guess.l2_norm();};
+          double alpha = dist_from_guess/guess_u_norm; // so that it is always in [0, 1]
+
+          evaluation_points.reinit(owned_partitioning, relevant_partitioning, mpi_communicator)
+          tmp_initial_guess.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
+          tmp_initial_guess += old_solution; // if alpha = 0, || initial_guess - old solution || = 0, so that initial_guess = old solution
+                                                 // and I should only weight it with the initial guess
+                                                 // so alpha should multiply the previous solution
+          tmp_intial_guess *= alpha;
+          evaluation_points = initial_guess;  // (1-alpha)* initial_guess
+          evaluation_points *= (1.0-alpha);
+          evaluation_points += tmp_initial_guess; // alpha*old solution + (1-alpha)*initial_guess
+        }
+        else { evaluation_points = present_solution; }
+
+        if (line_search_n%3 == 0) { assemble_system(first_iteration); /* We do not update the Jacobian at each iteration to reduce the cost */ }
         else { assemble_rhs(first_iteration); }
         solve(first_iteration);
  

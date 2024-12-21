@@ -778,7 +778,7 @@ namespace coanda
   template <int dim>
   void NS<dim>::assemble_rhs(const bool first_iteration)
   {
-    const bool assemble_jacobian{true};
+    const bool assemble_jacobian{false};
     assemble(first_iteration, assemble_jacobian);
   }
 

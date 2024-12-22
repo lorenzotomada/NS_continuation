@@ -1,9 +1,8 @@
 /* -----------------------------------------------------------------------------
  TODO:
     1) Netwon's method
-      1.1) Preconditioner 
-      1.2) Separate function for mesh-depending matrix and other components
-      1.3) Ideally, theta-method (or at least K-N)
+      1.1) Separate function for mesh-depending matrix and other components
+      1.2) Ideally, theta-method (or at least K-N)
     2) Continuation algorithm
       2.1) Start from asymmetrical initial guess: steady NS solver (maybe as a class attribute)
     3) Perform tests
@@ -96,7 +95,7 @@ namespace coanda
 
 
 
-  // ------------------------------- TIME CLASS -------------------------------
+// ------------------------------- TIME CLASS -------------------------------
 
 
 
@@ -220,109 +219,239 @@ namespace coanda
 
 
 
-// --------------------------- PRECONDITIONER --------------------------- //
+// -------------------- SCHUR COMPLEMENT SPARSITY --------------------
 
 
 
-  class BlockSchurPreconditioner : public Subscriptor
+  inline void schur_complement_sparsity(DynamicSparsityPattern &dst, const PETScWrappers::MPI::BlockSparseMatrix &src)
   {
-  public:
-    BlockSchurPreconditioner(
-    TimerOutput &timer,
-    double gamma,
-    double viscosity,
-    double dt,
-    const std::vector<IndexSet> &owned_partitioning,
-    const PETScWrappers::MPI::BlockSparseMatrix &jacobian,
-    const PETScWrappers::MPI::BlockSparseMatrix &mass,
-    PETScWrappers::MPI::BlockSparseMatrix &schur);
-  
-    void vmult(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const;
-  
-  private:
-    TimerOutput &timer;
-    const double gamma;
-    const double viscosity;
-    const double dt;
-  
-    const SmartPointer<const PETScWrappers::MPI::BlockSparseMatrix> jacobian_matrix;
-    const SmartPointer<const PETScWrappers::MPI::BlockSparseMatrix> mass_matrix;
-    const SmartPointer<PETScWrappers::MPI::BlockSparseMatrix> mass_schur;
-  };
-  
+    PETScWrappers::MPI::SparseMatrix tmp_mat;
+    src.block(1, 0).mmult(tmp_mat, src.block(0, 1));
+    //dst.reinit(tmp_mat.m(), tmp_mat.n());
 
+    for (const auto &row : tmp_mat.locally_owned_range_indices())
+    {
+      for (auto entry = tmp_mat.begin(row); entry != tmp_mat.end(row); ++entry)
+      {
+        dst.add(entry->row(), entry->column());
+      }
+    }
 
-  BlockSchurPreconditioner::BlockSchurPreconditioner(TimerOutput &timer,
-                                                    double gamma,
-                                                    double viscosity,
-                                                    double dt,
-                                                    const std::vector<IndexSet> &owned_partitioning,
-                                                    const PETScWrappers::MPI::BlockSparseMatrix &jacobian,
-                                                    const PETScWrappers::MPI::BlockSparseMatrix &mass,
-                                                    PETScWrappers::MPI::BlockSparseMatrix &schur)
-    : timer(timer),
-      gamma(gamma),
-      viscosity(viscosity),
-      dt(dt),
-      jacobian_matrix(&jacobian),
-      mass_matrix(&mass),
-      mass_schur(&schur)
-  {
-    TimerOutput::Scope timer_section(timer, "GMRES for Sm");
-
-    PETScWrappers::MPI::BlockVector tmp1, tmp2;
-    tmp1.reinit(owned_partitioning, mass_matrix->get_mpi_communicator());
-    tmp2.reinit(owned_partitioning, mass_matrix->get_mpi_communicator());
-    tmp1 = 1;
-    tmp2 = 0;
-
-    PETScWrappers::PreconditionJacobi jacobi(mass_matrix->block(0, 0));
-    jacobi.vmult(tmp2.block(0), tmp1.block(0));
-    jacobian_matrix->block(1, 0).mmult(mass_schur->block(1, 1), jacobian_matrix->block(0, 1), tmp2.block(0));
+    // Add entries for the (1, 1) block.
+    for (const auto &row : src.block(1, 1).locally_owned_range_indices())
+    {
+      for (auto entry = src.block(1, 1).begin(row); entry != src.block(1, 1).end(row); ++entry)
+      {
+        dst.add(entry->row(), entry->column());
+      }
+    }
   }
 
 
 
-  void BlockSchurPreconditioner::vmult(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const
+// -------------------- SCHUR COMPLEMENT --------------------
+
+
+
+  inline void schur_complement(PETScWrappers::MPI::SparseMatrix &dst, const PETScWrappers::MPI::BlockSparseMatrix &src, const PETScWrappers::MPI::Vector &diag_A00_inverse)
   {
-    PETScWrappers::MPI::Vector utmp(src.block(0));
-    PETScWrappers::MPI::Vector tmp(src.block(1));
-    tmp = 0;
+    PETScWrappers::MPI::SparseMatrix tmp_mat;
+    src.block(1, 0).mmult(tmp_mat, src.block(0, 1), diag_A00_inverse);
+    dst = 0.0;
+    dst.add(1.0, tmp_mat);
+    dst.add(-1.0, src.block(1, 1));
+  }
+
+
+
+
+
+// -------------------- SIMPLE PRECONDITIONER --------------------
+
+
+
+  class SIMPLE : public Subscriptor
+  {
+    public:
+    SIMPLE(
+          MPI_Comm mpi_communicator,
+          TimerOutput &timer,
+          const std::vector<IndexSet> &owned_partitioning,
+          const std::vector<IndexSet> &relevant_partitioning,
+          const PETScWrappers::MPI::BlockSparseMatrix &jacobian_matrix
+    );
+
+
+    void initialize_schur();
+    void initialize();
+    void assemble();
+
+    void vmult(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const
     {
-      TimerOutput::Scope timer_section(timer, "GMRES for Mp");
-      SolverControl mp_control(/* src.block(1).size() */ 50000, 1e-3 * src.block(1).l2_norm()); // 1e-6
-      PETScWrappers::SolverGMRES cg_mp(mp_control, mass_schur->get_mpi_communicator());
-      PETScWrappers::PreconditionBlockJacobi Mp_preconditioner;
-      Mp_preconditioner.initialize(mass_matrix->block(1, 1));
-      cg_mp.solve(mass_matrix->block(1, 1), tmp, src.block(1), Mp_preconditioner);
-      tmp *= -(viscosity + gamma);
+      vmult_L(tmp, src);
+      vmult_U(dst, tmp);
+    }
+  
+    private:
+    void vmult_L(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const;
+    void vmult_U(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const;
+
+
+    MPI_Comm mpi_communicator;
+    TimerOutput &timer;
+
+    const std::vector<IndexSet> &owned_partitioning;
+    const std::vector<IndexSet> &relevant_partitioning;
+
+    const SmartPointer<const PETScWrappers::MPI::BlockSparseMatrix> jacobian_matrix;
+    PETScWrappers::MPI::SparseMatrix approximate_schur;
+
+    mutable PETScWrappers::MPI::BlockVector tmp;
+    PETScWrappers::MPI::Vector diag_F_inv;
+  };
+
+
+
+// --------------------- SIMPLE::CONSTRUCTOR ---------------------
+
+
+
+  SIMPLE::SIMPLE(MPI_Comm mpi_communicator,
+                TimerOutput &timer,
+                const std::vector<IndexSet> &owned_partitioning,
+                const std::vector<IndexSet> &relevant_partitioning,
+                const PETScWrappers::MPI::BlockSparseMatrix &jacobian_matrix) : 
+    mpi_communicator(mpi_communicator),
+    timer(timer),
+    owned_partitioning(owned_partitioning),
+    relevant_partitioning(relevant_partitioning),
+    jacobian_matrix(&jacobian_matrix)
+  { 
+    tmp.reinit(owned_partitioning, mpi_communicator);
+  }
+
+
+
+// --------------------- INITIALIZE SCHUR ---------------------
+
+
+
+  void SIMPLE::initialize_schur()
+  {
+    DynamicSparsityPattern dsp_schur(relevant_partitioning[1]);
+    schur_complement_sparsity(dsp_schur, (*jacobian_matrix));
+
+    SparsityTools::distribute_sparsity_pattern(dsp_schur, owned_partitioning[1], mpi_communicator, relevant_partitioning[1]);
+    approximate_schur.reinit(owned_partitioning[1], owned_partitioning[1], dsp_schur, mpi_communicator);
+  }
+
+
+
+// -------------------- INITIALIZE --------------------
+
+
+
+  void SIMPLE::initialize()
+  {
+    diag_F_inv.reinit(owned_partitioning[0], mpi_communicator);
+
+    tmp.reinit(owned_partitioning, mpi_communicator);
+    //tmp = 0;
+  }
+
+
+
+// --------------------- ASSEMBLE ---------------------
+
+
+
+  void SIMPLE::assemble()
+  {
+    // Initialize the sparsity pattern before the first call. This is done
+    // here instead of in initialize() because the jacobian is not ready
+    // before that.
+    initialize_schur();
+    initialize();
+
+    const unsigned int start = diag_F_inv.local_range().first;
+    const unsigned int end = diag_F_inv.local_range().second;
+
+    for (unsigned int j = start; j < end; ++j)
+    {
+      AssertThrow((*jacobian_matrix).block(0, 0).diag_element(j) != 0.0, ExcDivideByZero());
+      diag_F_inv(j) = 1.0 / (*jacobian_matrix).block(0, 0).diag_element(j);
     }
 
+    diag_F_inv.compress(VectorOperation::insert);
 
-    {
-      TimerOutput::Scope timer_section(timer, "GMRES for Sm");
-      SolverControl sm_control(/* src.block(1).size() */ 50000, 1e-3 * src.block(1).l2_norm());
-      PETScWrappers::SolverGMRES cg_sm(sm_control, mass_schur->get_mpi_communicator());
-      PETScWrappers::PreconditionNone Sm_preconditioner;
-      Sm_preconditioner.initialize(mass_schur->block(1, 1));
-      cg_sm.solve(mass_schur->block(1, 1), dst.block(1), src.block(1), Sm_preconditioner);
-      dst.block(1) *= -1 / dt;
-    }
+    schur_complement(approximate_schur, (*jacobian_matrix), diag_F_inv);
+  }
 
-    dst.block(1) += tmp;
 
-    jacobian_matrix->block(0, 1).vmult(utmp, dst.block(1));
-    utmp *= -1.0;
-    utmp += src.block(0);
 
-    {
-      TimerOutput::Scope timer_section(timer, "GMRES for A");
-      SolverControl a_control(/* src.block(0).size() */ 50000, 1e-3 * src.block(0).l2_norm()); //1e-6
-      PETScWrappers::SolverGMRES cg_a(a_control, mass_schur->get_mpi_communicator());
-      PETScWrappers::PreconditionNone A_preconditioner;
-      A_preconditioner.initialize(jacobian_matrix->block(0, 0));
-      cg_a.solve(jacobian_matrix->block(0, 0), dst.block(0), utmp, A_preconditioner);
-    }
+// --------------------- VMULT_L ---------------------
+
+
+
+  void SIMPLE::vmult_L(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const
+  {
+    TimerOutput::Scope timer_section(timer, "GMRES for preconditioner");
+
+    SolverControl F_inv_control(20000, 1e-3 * src.block(0).l2_norm());
+    PETScWrappers::SolverGMRES F_solver(F_inv_control, jacobian_matrix->get_mpi_communicator());
+
+    PETScWrappers::PreconditionBoomerAMG F_inv_preconditioner(mpi_communicator, PETScWrappers::PreconditionBoomerAMG::AdditionalData());
+    F_inv_preconditioner.initialize(jacobian_matrix->block(0, 0));
+
+    F_solver.solve((*jacobian_matrix).block(0, 0), dst.block(0), src.block(0), F_inv_preconditioner); // d0 = F^{-1} * s0
+
+    (*jacobian_matrix).block(1, 0).vmult(tmp.block(1), dst.block(0)); // t1 = (-B) * d0
+    tmp.block(1).add(-1.0, src.block(1)); // t1 -= s1
+    
+    SolverControl Schur_inv_control(20000, 1e-3 * src.block(1).l2_norm());
+    PETScWrappers::SolverGMRES Schur_solver(Schur_inv_control, mpi_communicator);
+    
+    PETScWrappers::PreconditionBoomerAMG Schur_inv_preconditioner(mpi_communicator, PETScWrappers::PreconditionBoomerAMG::AdditionalData());
+    Schur_inv_preconditioner.initialize(approximate_schur);
+
+                  // To debug:
+                    //unsigned int dst_size2 = dst.block(1).size();    // Should also be 2157
+                    //unsigned int tmp_size2 = tmp.block(1).size();    // Should also be 2157
+                    //unsigned int src_size2 = src.block(1).size();    // Should also be 2157
+                    //std::cout << dst_size2 <<", "<< tmp_size2 << ", "<<src_size2 <<", "<< approximate_schur.m() << " x " << approximate_schur.n() << std::endl;
+
+  unsigned int dst_size2 = dst.block(1).size();
+  PETScWrappers::MPI::BlockVector solution;
+  solution.reinit(1, mpi_communicator, dst_size2, dst_size2);
+
+  solution = 0.0;
+  Schur_solver.solve(approximate_schur, solution.block(0), tmp.block(1), Schur_inv_preconditioner); // d1 = (-Sigma^{-1}) * t1
+
+  dst.block(1) = solution.block(0);
+
+    //Schur_solver.solve(approximate_schur, dst.block(1), tmp.block(1), Schur_inv_preconditioner); // d1 = (-Sigma^{-1}) * t1
+    // this throws an error: the initial guess can't be empty
+
+    // In case of defective flow BC treatment the Navier-Stokes system matrix
+    // has an extra block associated with the Lagrange multipliers (n_blocks=3).
+    // Thus, in case of defective flow BCs we add an extra identity block.
+    if (src.n_blocks() == 3) { dst.block(2) = src.block(2); }
+  }
+
+
+
+// --------------------- VMULT_U ---------------------
+
+
+
+  void SIMPLE::vmult_U(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const
+  {
+    dst.block(1) = src.block(1); // d1 = s1
+    (*jacobian_matrix).block(0, 1).vmult(dst.block(0), src.block(1)); // d0 = B^T * s1
+    dst.block(0).scale(diag_F_inv); // d0 = D^{-1} * d0
+    dst.block(0).sadd(-1.0, src.block(0)); // d0 = s0 - d0
+
+    if (src.n_blocks() == 3) { dst.block(2) = src.block(2); }
   }
 
 
@@ -380,8 +509,6 @@ namespace coanda
     BlockSparsityPattern sparsity_pattern;
 
     PETScWrappers::MPI::BlockSparseMatrix jacobian_matrix;
-    PETScWrappers::MPI::BlockSparseMatrix mass_schur;
-    PETScWrappers::MPI::BlockSparseMatrix mass_matrix;
 
     PETScWrappers::MPI::BlockVector present_solution;
     PETScWrappers::MPI::BlockVector old_solution;
@@ -400,7 +527,7 @@ namespace coanda
     Time time;
     mutable TimerOutput timer;
 
-    std::shared_ptr<BlockSchurPreconditioner> preconditioner;
+    std::shared_ptr<SIMPLE> preconditioner;
   };
 
 
@@ -414,7 +541,7 @@ namespace coanda
     : adaptive_refinement(adaptive_refinement),
       use_continuation(use_continuation),
       distort_mesh(distort_mesh),
-      n_glob_ref(1),
+      n_glob_ref(0),
       mpi_communicator(MPI_COMM_WORLD),
       viscosity(0.5),
       fe_degree(fe_degree),
@@ -427,7 +554,7 @@ namespace coanda
       quad_formula(fe_degree + 2),
       face_quad_formula(fe_degree + 2),
       pcout(std::cout, Utilities::MPI::this_mpi_process(mpi_communicator) == 0),
-      time(3, 1e-2, 1e-1, 1e-2),
+      time(3, 1e-2, 1e-2, 1e-1),
       timer(mpi_communicator, pcout, TimerOutput::never, TimerOutput::wall_times)  
   {
     make_grid();
@@ -449,7 +576,7 @@ namespace coanda
 
     if constexpr (dim == 2) // Checking with constexpr because it is known already at compile-time
     {
-      std::vector<unsigned int> subdivisions{50, 8};
+      std::vector<unsigned int> subdivisions{55, 9};
       GridGenerator::subdivided_hyper_rectangle(rectangle, subdivisions, Point<2>(0, 0), Point<2>(50, 7.5));
     }
     else
@@ -595,8 +722,6 @@ namespace coanda
   {
     preconditioner.reset();
     jacobian_matrix.clear();
-    mass_matrix.clear();
-    mass_schur.clear();
 
     BlockDynamicSparsityPattern dsp(relevant_partitioning);
     DoFTools::make_sparsity_pattern(dof_handler, dsp, nonzero_constraints);
@@ -608,13 +733,12 @@ namespace coanda
                                               locally_relevant_dofs
                                               );
 
-    BlockDynamicSparsityPattern schur_dsp(dofs_per_block, dofs_per_block);  // from unsteady NS, not step 57
+    //BlockDynamicSparsityPattern schur_dsp(dofs_per_block, dofs_per_block);  // from unsteady NS, not step 57
 
-    schur_dsp.block(1, 1).compute_mmult_pattern(sparsity_pattern.block(1, 0), sparsity_pattern.block(0, 1));
-    mass_schur.reinit(owned_partitioning, schur_dsp, mpi_communicator);
+    //schur_dsp.block(1, 1).compute_mmult_pattern(sparsity_pattern.block(1, 0), sparsity_pattern.block(0, 1));
+  
       
     jacobian_matrix.reinit(owned_partitioning, dsp, mpi_communicator);
-    mass_matrix.reinit(owned_partitioning, dsp, mpi_communicator);
 
     present_solution.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
     old_solution.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
@@ -638,7 +762,6 @@ namespace coanda
     if (assemble_jacobian)
     {
       jacobian_matrix = 0;
-      mass_matrix = 0;
     }
 
     system_rhs = 0;
@@ -715,7 +838,6 @@ namespace coanda
                       + phi_u[i] * (present_velocity_values[q] * grad_phi_u[j])       //   Linearization of the convective term (pt. 2) 
                       ) * fe_values.JxW(q);                                           //   JxW, integration weights   
 
-                local_mass_matrix(i, j) += (phi_u[i] * phi_u[j] + phi_p[i] * phi_p[j]) * fe_values.JxW(q); 
               }
             }
 
@@ -737,7 +859,6 @@ namespace coanda
         if (assemble_jacobian)
         {
           constraints_used.distribute_local_to_global(local_matrix, local_rhs, local_dof_indices, jacobian_matrix, system_rhs);
-          constraints_used.distribute_local_to_global(local_mass_matrix, local_dof_indices, mass_matrix);
         }
         else
         {
@@ -747,7 +868,6 @@ namespace coanda
      
       if (assemble_jacobian)
       {
-        mass_matrix.compress(VectorOperation::add);
         jacobian_matrix.compress(VectorOperation::add);
         jacobian_matrix.block(1, 1) = 0;
       }
@@ -793,14 +913,13 @@ namespace coanda
   {
     const AffineConstraints<double> &constraints_used = first_iteration ? nonzero_constraints : zero_constraints;
  
-    preconditioner.reset(new BlockSchurPreconditioner(timer,
-                                                      0,
-                                                      viscosity,
-                                                      time.get_delta_t(),
-                                                      owned_partitioning,
-                                                      jacobian_matrix,
-                                                      mass_matrix,
-                                                      mass_schur));
+    preconditioner.reset(new SIMPLE(mpi_communicator,
+                timer,
+                owned_partitioning,
+                relevant_partitioning,
+                jacobian_matrix));
+
+    preconditioner -> assemble();
 
     SolverControl solver_control(/* jacobian_matrix.m() */ 50000, 1e-4 * system_rhs.l2_norm(), true);
     

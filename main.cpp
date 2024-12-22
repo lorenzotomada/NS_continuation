@@ -4,6 +4,7 @@
       1.1) Initial condition and boundary conditions: ensure consistency (possibly removing the first_iteration boolean from newton_iteration)
       1.2) Separate function for mesh-depending matrix and other components
       1.3) Ideally, theta-method (or at least K-N), taking into account the bdry conditions. Save f^n at each iteration (the RHS)
+      1.4) Unique function (setup dofs + setup system)
     2) Continuation algorithm
       2.1) Start from asymmetrical initial guess: steady NS solver (maybe as a class attribute)
       2.2) Find the asymmetrical solution
@@ -409,28 +410,20 @@ namespace coanda
     F_solver.solve((*jacobian_matrix).block(0, 0), dst.block(0), src.block(0), F_inv_preconditioner); // d0 = F^{-1} * s0
 
     (*jacobian_matrix).block(1, 0).vmult(tmp.block(1), dst.block(0)); // t1 = (-B) * d0
+
     tmp.block(1).add(-1.0, src.block(1)); // t1 -= s1
-    
     SolverControl Schur_inv_control(20000, 1e-3 * src.block(1).l2_norm());
     PETScWrappers::SolverGMRES Schur_solver(Schur_inv_control, mpi_communicator);
-    
+
     PETScWrappers::PreconditionBoomerAMG Schur_inv_preconditioner(mpi_communicator, PETScWrappers::PreconditionBoomerAMG::AdditionalData());
     Schur_inv_preconditioner.initialize(approximate_schur);
 
-                  // To debug:
-                    //unsigned int dst_size2 = dst.block(1).size();    // Should also be 2157
-                    //unsigned int tmp_size2 = tmp.block(1).size();    // Should also be 2157
-                    //unsigned int src_size2 = src.block(1).size();    // Should also be 2157
-                    //std::cout << dst_size2 <<", "<< tmp_size2 << ", "<<src_size2 <<", "<< approximate_schur.m() << " x " << approximate_schur.n() << std::endl;
+    PETScWrappers::MPI::Vector solution(dst.block(1));
 
-  unsigned int dst_size2 = dst.block(1).size();
-  PETScWrappers::MPI::BlockVector solution;
-  solution.reinit(1, mpi_communicator, dst_size2, dst_size2);
+    solution = 0.0;
+    Schur_solver.solve(approximate_schur, solution, tmp.block(1), Schur_inv_preconditioner); // d1 = (-Sigma^{-1}) * t1
 
-  solution = 0.0;
-  Schur_solver.solve(approximate_schur, solution.block(0), tmp.block(1), Schur_inv_preconditioner); // d1 = (-Sigma^{-1}) * t1
-
-  dst.block(1) = solution.block(0);
+    dst.block(1) = solution;
 
     //Schur_solver.solve(approximate_schur, dst.block(1), tmp.block(1), Schur_inv_preconditioner); // d1 = (-Sigma^{-1}) * t1
     // this throws an error: the initial guess can't be empty
@@ -544,7 +537,7 @@ namespace coanda
     : adaptive_refinement(adaptive_refinement),
       use_continuation(use_continuation),
       distort_mesh(distort_mesh),
-      n_glob_ref(0),
+      n_glob_ref(1),
       mpi_communicator(MPI_COMM_WORLD),
       viscosity(0.5),
       fe_degree(fe_degree),
@@ -579,7 +572,7 @@ namespace coanda
 
     if constexpr (dim == 2) // Checking with constexpr because it is known already at compile-time
     {
-      std::vector<unsigned int> subdivisions{55, 9};
+      std::vector<unsigned int> subdivisions{56, 18};
       GridGenerator::subdivided_hyper_rectangle(rectangle, subdivisions, Point<2>(0, 0), Point<2>(50, 7.5));
     }
     else
@@ -587,8 +580,8 @@ namespace coanda
       std::vector<unsigned int> subdivisions{50, 8, 8};
       GridGenerator::subdivided_hyper_rectangle(rectangle, subdivisions, Point<3>(0, 0, 0), Point<3>(50, 7.5, 7.5));
     }
-
-    if (n_glob_ref > 0) { rectangle.refine_global(n_glob_ref); }
+    
+    if (n_glob_ref > 0) { rectangle.refine_global(n_glob_ref); } // explain why it is here
 
     std::set<typename Triangulation<dim>::active_cell_iterator> cells_to_remove;
     bool inside_domain{true};
@@ -641,7 +634,7 @@ namespace coanda
       }
     }
 
-    if (distort_mesh) { GridTools::distort_random(0.3, triangulation, true); }
+    if (distort_mesh) { GridTools::distort_random(0.2, triangulation, true); }
 
     std::ofstream out("mesh.vtk");
     GridOut grid_out;

@@ -1,10 +1,12 @@
 /* -----------------------------------------------------------------------------
  TODO:
     1) Netwon's method
-      1.1) Separate function for mesh-depending matrix and other components
-      1.2) Ideally, theta-method (or at least K-N)
+      1.1) Initial condition and boundary conditions: ensure consistency (possibly removing the first_iteration boolean from newton_iteration)
+      1.2) Separate function for mesh-depending matrix and other components
+      1.3) Ideally, theta-method (or at least K-N), taking into account the bdry conditions. Save f^n at each iteration (the RHS)
     2) Continuation algorithm
       2.1) Start from asymmetrical initial guess: steady NS solver (maybe as a class attribute)
+      2.2) Find the asymmetrical solution
     3) Perform tests
       3.1) Without mesh refinement, symmetrical mesh
       3.2) Without mesh refinement, asymmetrical mesh
@@ -12,6 +14,7 @@
       3.4) With mesh refinement, symmetrical mesh, asymmetrical refinement (set refinement flag only e.g. if y > 7.5/2)
       3.5) Combine with initial guesses and see what changes (either, if possible, trying to obtain the other branch, or to get immediately the unstable one)
       3.6) At least hints for the 3D case
+    4) Move some material in utils.hpp
 * ------------------------------------------------------------------------------ */
 
 
@@ -554,7 +557,7 @@ namespace coanda
       quad_formula(fe_degree + 2),
       face_quad_formula(fe_degree + 2),
       pcout(std::cout, Utilities::MPI::this_mpi_process(mpi_communicator) == 0),
-      time(3, 1e-2, 1e-2, 1e-1),
+      time(20, 1e-2, 1e-1, 1e-1),
       timer(mpi_communicator, pcout, TimerOutput::never, TimerOutput::wall_times)  
   {
     make_grid();
@@ -1005,7 +1008,7 @@ namespace coanda
         }
         else { evaluation_points = present_solution; }
 
-        if (line_search_n%3 == 0) { assemble_system(first_iteration); /* We do not update the Jacobian at each iteration to reduce the cost */ }
+        if (line_search_n%2 == 0) { assemble_system(first_iteration); /* We do not update the Jacobian at each iteration to reduce the cost */ }
         else { assemble_rhs(first_iteration); }
         solve(first_iteration);
  
@@ -1171,7 +1174,7 @@ namespace coanda
       pcout << std::string(96, '*') << std::endl << "Time step = " << time.get_timestep() << ", at t = " << std::scientific << time.current() << std::endl;
       
   
-      newton_iteration(1e-9, 50, first_iteration);
+      newton_iteration(1e-9, 75, first_iteration);
 
       double norm_increment;
 
@@ -1229,7 +1232,7 @@ int main(int argc, char *argv[])
     const bool initial_guess{false};
     const bool distort_mesh{true};
     const unsigned int fe_degree{2};
-    const double stopping_criterion{1e-7};
+    const double stopping_criterion{1e-10};
     
     NS<2> bifurc_NS{adaptive_refinement, initial_guess, distort_mesh, fe_degree, stopping_criterion};
     bifurc_NS.run();

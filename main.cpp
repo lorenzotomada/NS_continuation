@@ -1,13 +1,12 @@
 /* -----------------------------------------------------------------------------
  TODO:
-    1) Netwon's method
-      1.1) Initial condition and boundary conditions: ensure consistency (possibly removing the first_iteration boolean from newton_iteration)
-      1.2) Separate function for mesh-depending matrix and other components
-      1.3) Ideally, theta-method (or at least K-N), taking into account the bdry conditions. Save f^n at each iteration (the RHS)
-      1.4) Unique function (setup dofs + setup system)
+    1) Numerical discretization
+      1.1) Separate function for mesh-depending matrix and other components
+      1.2) Ideally, theta-method (or at least K-N), taking into account the bdry conditions. Save f^n at each iteration (the RHS)
+      1.3) Unique function (setup dofs + setup system)
     2) Continuation algorithm
-      2.1) Start from asymmetrical initial guess: steady NS solver (maybe as a class attribute)
-      2.2) Find the asymmetrical solution
+      2.1) Continuation algorithm for the steady case
+      2.2) Use it to find the asymmetrical solution
     3) Perform tests
       3.1) Without mesh refinement, symmetrical mesh
       3.2) Without mesh refinement, asymmetrical mesh
@@ -15,7 +14,7 @@
       3.4) With mesh refinement, symmetrical mesh, asymmetrical refinement (set refinement flag only e.g. if y > 7.5/2)
       3.5) Combine with initial guesses and see what changes (either, if possible, trying to obtain the other branch, or to get immediately the unstable one)
       3.6) At least hints for the 3D case
-    4) Move some material in utils.hpp
+    4) Move some material in utils.hpp, maybe remove first_iteration
 * ------------------------------------------------------------------------------ */
 
 
@@ -452,9 +451,7 @@ namespace coanda
 
 
 
-// --------------------------------------------------------------------------------- //
 // ------------------------------------ NS CLASS ----------------------------------- //
-// --------------------------------------------------------------------------------- //
 
 
 
@@ -462,7 +459,14 @@ namespace coanda
   class NS
   {
   public:
-    NS(const bool adaptive_refinement, const bool use_continuation, const bool distort_mesh, const unsigned int fe_degree, const double stopping_criterion);
+    NS(const bool adaptive_refinement,
+          const bool use_continuation,
+          const bool distort_mesh,
+          const unsigned int fe_degree,
+          const double stopping_criterion,
+          const unsigned int n_glob_ref,
+          const unsigned int jacobian_update_step
+          );
     void run();
     ~NS() { timer.print_summary(); }
 
@@ -472,24 +476,31 @@ namespace coanda
     void setup_dofs();
     void setup_system();
 
-    void assemble(const bool first_iteration, const bool assemble_jacobian); // assemble both jacobian and residual
-    void assemble_system(const bool first_iteration);
-    void assemble_rhs(const bool first_iteration);
+    void assemble(const bool first_iteration, const bool assemble_jacobian, const bool steady_system=false); // assemble both jacobian and residual
+    void assemble_system(const bool first_iteration, const bool steady_system=false);
+    void assemble_rhs(const bool first_iteration, const bool steady_system=false);
 
     void solve(bool first_iteration);
-    void refine_mesh(const unsigned int, const unsigned int);
-    void output_results(const unsigned int) const;
-    void newton_iteration(const double tolerance, const unsigned int max_n_line_searches, const bool is_initial_step);
+    void refine_mesh(const unsigned int min_grid_level, const unsigned int max_grid_level);
+    void output_results(const unsigned int output_index) const;
+    void newton_iteration(PETScWrappers::MPI::BlockVector &dst,
+                          const double tolerance,
+                          const unsigned int max_n_line_searches,
+                          const bool is_initial_step,
+                          const bool steady_system=false);
+
+    void compute_initial_guess();
     
 
     const bool adaptive_refinement;
     const bool use_continuation;
     const bool distort_mesh; // done following https://www.dealii.org/current/doxygen/deal.II/step_49.html
-    int n_glob_ref;
     MPI_Comm mpi_communicator;
     double viscosity;
     const unsigned int fe_degree; // added wrt step 57
     const double stopping_criterion; // same
+    const unsigned int n_glob_ref;
+    const unsigned int jacobian_update_step;
 
     std::vector<types::global_dof_index> dofs_per_block;
 
@@ -512,7 +523,7 @@ namespace coanda
     PETScWrappers::MPI::BlockVector newton_update;
     PETScWrappers::MPI::BlockVector system_rhs;
     PETScWrappers::MPI::BlockVector evaluation_points;
-    PETScWrappers::MPI::BlockVector newton_initial_guess;
+    PETScWrappers::MPI::BlockVector steady_solution;
   
 
     ConditionalOStream pcout;
@@ -533,15 +544,23 @@ namespace coanda
 
 
   template <int dim>
-  NS<dim>::NS(const bool adaptive_refinement, const bool use_continuation, const bool distort_mesh, const unsigned int fe_degree, const double stopping_criterion)
+  NS<dim>::NS(const bool adaptive_refinement,
+              const bool use_continuation,
+              const bool distort_mesh,
+              const unsigned int fe_degree,
+              const double stopping_criterion,
+              const unsigned int n_glob_ref,
+              const unsigned int jacobian_update_step
+              )
     : adaptive_refinement(adaptive_refinement),
       use_continuation(use_continuation),
       distort_mesh(distort_mesh),
-      n_glob_ref(1),
       mpi_communicator(MPI_COMM_WORLD),
       viscosity(0.5),
       fe_degree(fe_degree),
       stopping_criterion(stopping_criterion),
+      n_glob_ref(n_glob_ref),
+      jacobian_update_step(jacobian_update_step),
       triangulation(mpi_communicator,
                     typename Triangulation<dim>::MeshSmoothing(Triangulation<dim>::smoothing_on_refinement |
                     Triangulation<dim>::smoothing_on_coarsening)),
@@ -572,7 +591,7 @@ namespace coanda
 
     if constexpr (dim == 2) // Checking with constexpr because it is known already at compile-time
     {
-      std::vector<unsigned int> subdivisions{56, 18};
+      std::vector<unsigned int> subdivisions{65, 12};
       GridGenerator::subdivided_hyper_rectangle(rectangle, subdivisions, Point<2>(0, 0), Point<2>(50, 7.5));
     }
     else
@@ -634,7 +653,7 @@ namespace coanda
       }
     }
 
-    if (distort_mesh) { GridTools::distort_random(0.2, triangulation, true); }
+    if (distort_mesh) { GridTools::distort_random(0.1, triangulation, true); }
 
     std::ofstream out("mesh.vtk");
     GridOut grid_out;
@@ -728,11 +747,6 @@ namespace coanda
                                               mpi_communicator,
                                               locally_relevant_dofs
                                               );
-
-    //BlockDynamicSparsityPattern schur_dsp(dofs_per_block, dofs_per_block);  // from unsteady NS, not step 57
-
-    //schur_dsp.block(1, 1).compute_mmult_pattern(sparsity_pattern.block(1, 0), sparsity_pattern.block(0, 1));
-  
       
     jacobian_matrix.reinit(owned_partitioning, dsp, mpi_communicator);
 
@@ -741,7 +755,7 @@ namespace coanda
     evaluation_points.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
     system_rhs.reinit(owned_partitioning, mpi_communicator); // non-ghosted
     newton_update.reinit(owned_partitioning, mpi_communicator); // non-ghosted
-    newton_initial_guess.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
+    steady_solution.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
   }
 
 
@@ -751,7 +765,7 @@ namespace coanda
 
 
   template <int dim>
-  void NS<dim>::assemble(bool first_iteration, bool assemble_jacobian)
+  void NS<dim>::assemble(bool first_iteration, bool assemble_jacobian, const bool steady_system)
   {
     TimerOutput::Scope timer_section(timer, "Assemble system");
     
@@ -771,7 +785,6 @@ namespace coanda
     const FEValuesExtractors::Scalar pressure(dim);
 
     FullMatrix<double> local_matrix(dofs_per_cell, dofs_per_cell);
-    FullMatrix<double> local_mass_matrix(dofs_per_cell, dofs_per_cell);
     Vector<double>     local_rhs(dofs_per_cell);
 
     std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
@@ -797,7 +810,6 @@ namespace coanda
         if (assemble_jacobian)
         {
           local_matrix = 0;
-          local_mass_matrix = 0;
         }
 
         local_rhs = 0;
@@ -826,25 +838,32 @@ namespace coanda
             {
               for (unsigned int j = 0; j < dofs_per_cell; ++j)
               {  
-                local_matrix(i,j) += ( (phi_u[i] * phi_u[j]) / time.get_delta_t()     //   From time stepping, 1/dt*M);
-                      + viscosity * scalar_product(grad_phi_u[i], grad_phi_u[j])      //   a(u, v) ---> mu*grad(u)*grad(v)  
+                double mass_matrix_contribution = ((phi_u[i] * phi_u[j]) / time.get_delta_t())
+                                                   * fe_values.JxW(q);                //   From time stepping, 1/dt*M);
+                local_matrix(i,j) += (
+                      viscosity * scalar_product(grad_phi_u[i], grad_phi_u[j])        //   a(u, v) ---> mu*grad(u)*grad(v)  
                       - div_phi_u[i] * phi_p[j]                                       //   b(v, p) = -p*div(v)   
                       - phi_p[i] * div_phi_u[j]                                       //   b(u, q) = -q*div(u) 
                       + phi_u[i] * (present_velocity_gradients[q] * phi_u[j])         //   Linearization of the convective term (pt. 1) 
                       + phi_u[i] * (present_velocity_values[q] * grad_phi_u[j])       //   Linearization of the convective term (pt. 2) 
                       ) * fe_values.JxW(q);                                           //   JxW, integration weights   
 
+                if (!steady_system) { local_matrix(i, j) += mass_matrix_contribution; }
               }
             }
 
             double present_velocity_divergence = trace(present_velocity_gradients[q]);
 
-            local_rhs(i) += ((phi_u[i]*tmp[q]) / time.get_delta_t() 
+            double mass_matrix_contribution = ((phi_u[i]*tmp[q]) / time.get_delta_t())* fe_values.JxW(q);
+
+            local_rhs(i) += (
                           -viscosity * scalar_product(grad_phi_u[i], present_velocity_gradients[q])
                           - phi_u[i] * (present_velocity_gradients[q] * present_velocity_values[q])
                           + div_phi_u[i] * present_pressure_values[q]
                           + phi_p[i] * present_velocity_divergence
                           ) * fe_values.JxW(q);
+
+            if (!steady_system) { local_rhs(i) += mass_matrix_contribution; }
           }
         }
 
@@ -879,10 +898,10 @@ namespace coanda
 
 
   template <int dim>
-  void NS<dim>::assemble_system(const bool first_iteration)
+  void NS<dim>::assemble_system(const bool first_iteration, const bool steady_system)
   {
     const bool assemble_jacobian{true};
-    assemble(first_iteration, assemble_jacobian);
+    assemble(first_iteration, assemble_jacobian, steady_system);
   }
  
 
@@ -892,10 +911,10 @@ namespace coanda
 
 
   template <int dim>
-  void NS<dim>::assemble_rhs(const bool first_iteration)
+  void NS<dim>::assemble_rhs(const bool first_iteration, const bool steady_system)
   {
     const bool assemble_jacobian{false};
-    assemble(first_iteration, assemble_jacobian);
+    assemble(first_iteration, assemble_jacobian, steady_system);
   }
 
 
@@ -909,11 +928,7 @@ namespace coanda
   {
     const AffineConstraints<double> &constraints_used = first_iteration ? nonzero_constraints : zero_constraints;
  
-    preconditioner.reset(new SIMPLE(mpi_communicator,
-                timer,
-                owned_partitioning,
-                relevant_partitioning,
-                jacobian_matrix));
+    preconditioner.reset(new SIMPLE(mpi_communicator, timer, owned_partitioning, relevant_partitioning, jacobian_matrix));
 
     preconditioner -> assemble();
 
@@ -935,9 +950,12 @@ namespace coanda
 
 
   template <int dim>
-  void NS<dim>::newton_iteration(const double tolerance,
-                                 const unsigned int max_n_line_searches,
-                                 const bool is_initial_step)
+  void NS<dim>::newton_iteration(PETScWrappers::MPI::BlockVector &dst,
+                                const double tolerance,
+                                const unsigned int max_n_line_searches,
+                                const bool is_initial_step,
+                                const bool steady_system
+                                )
   {
     bool first_iteration = is_initial_step;
     unsigned int line_search_n = 0;
@@ -951,7 +969,7 @@ namespace coanda
         setup_dofs();
         setup_system();
 
-        evaluation_points = present_solution; // not needed actually, since both are 0
+        evaluation_points = dst;
 
         assemble_system(first_iteration);
         solve(first_iteration);
@@ -961,11 +979,11 @@ namespace coanda
         tmp = newton_update; // initial condition is 0, no need to add anything (adding 0)
         
         nonzero_constraints.distribute(tmp);
-        present_solution = tmp;
+        dst = tmp;
         // try to write  present_solution = newton_update;
 
         first_iteration = false;
-        evaluation_points = present_solution;
+        evaluation_points = dst;
 
         assemble_rhs(first_iteration);
         current_res = system_rhs.l2_norm();
@@ -976,15 +994,15 @@ namespace coanda
       {
         // Choose the initial guess for Netwon's method: either the solution at the previous time step, or a linear combination 
         // between it and an asymmetrical one
-        double guess_u_norm{newton_initial_guess.block(0).l2_norm()};
+        double guess_u_norm{steady_solution.block(0).l2_norm()};
 
-        if (use_continuation && guess_u_norm!=0)
+        if (use_continuation && guess_u_norm!=0 && !steady_system)  // reinit initial guess
         {
           PETScWrappers::MPI::BlockVector tmp_initial_guess;
           tmp_initial_guess.reinit(owned_partitioning, mpi_communicator);
 
           tmp_initial_guess -= old_solution;
-          tmp_initial_guess += newton_initial_guess; // initial guess - old solution
+          tmp_initial_guess += steady_solution; // initial guess - old solution
 
           double dist_from_guess{tmp_initial_guess.l2_norm()};
           double alpha = dist_from_guess/guess_u_norm; // so that it is always in [0, 1]
@@ -992,23 +1010,23 @@ namespace coanda
           evaluation_points.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
           tmp_initial_guess.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
           tmp_initial_guess += old_solution; // if alpha = 0, || initial_guess - old solution || = 0, so that initial_guess = old solution
-                                                 // and I should only weight it with the initial guess
-                                                 // so alpha should multiply the previous solution
+                                                 // and I should only weight it with the initial guess so alpha should multiply the previous solution
           tmp_initial_guess *= alpha;
-          evaluation_points = newton_initial_guess;  // (1-alpha)* initial_guess
+          evaluation_points = steady_solution;  // (1-alpha)* initial_guess
           evaluation_points *= (1.0-alpha);
           evaluation_points += tmp_initial_guess; // alpha*old solution + (1-alpha)*initial_guess
         }
-        else { evaluation_points = present_solution; }
 
-        if (line_search_n%2 == 0) { assemble_system(first_iteration); /* We do not update the Jacobian at each iteration to reduce the cost */ }
+        else { evaluation_points = dst; }
+
+        if (line_search_n%jacobian_update_step == 0) { assemble_system(first_iteration); /* We do not update the Jacobian at each iteration to reduce the cost */ }
         else { assemble_rhs(first_iteration); }
         solve(first_iteration);
  
         for (double alpha = 1.0; alpha > 1e-5; alpha *= 0.5)
         {
           evaluation_points.reinit(owned_partitioning, mpi_communicator);
-          evaluation_points = present_solution;
+          evaluation_points = dst;
           PETScWrappers::MPI::BlockVector tmp;
           tmp.reinit(owned_partitioning, mpi_communicator);
           tmp = newton_update;
@@ -1022,7 +1040,7 @@ namespace coanda
           std::cout << "    alpha: " << std::setw(10) << alpha << std::setw(0) << "  residual: " << current_res << std::endl;
           if (current_res < last_res)
           {
-            present_solution = evaluation_points;
+            dst = evaluation_points;
             break;
           }
         }
@@ -1136,6 +1154,18 @@ namespace coanda
 
 
 
+// -------------------- COMPUTE INITIAL GUESS --------------------
+
+
+
+  template <int dim>
+  void NS<dim>::compute_initial_guess()
+  {
+    pcout << "TODO!" << std::endl;
+  }
+
+
+
 // -------------------- RUN --------------------
 
 
@@ -1147,14 +1177,23 @@ namespace coanda
 
     setup_dofs();
     setup_system();
-    //nonzero_constraints.distribute(present_solution); // To ensure the initial condition also satisfies boundary conditions
-    //nonzero_constraints.distribute(old_solution); // To ensure the initial condition also satisfies boundary conditions
+
+    PETScWrappers::MPI::BlockVector tmp;
+    tmp.reinit(owned_partitioning, mpi_communicator);
+
+    nonzero_constraints.distribute(tmp);
+
+    old_solution = tmp;
 
     // Time loop.
 
     bool should_stop{false};
     bool first_iteration{true};
-  
+
+    if (use_continuation)
+    {
+      compute_initial_guess();
+    }
 
     while ((time.end() - time.current() > 1e-12) && (!should_stop)) 
     {
@@ -1167,7 +1206,7 @@ namespace coanda
       pcout << std::string(96, '*') << std::endl << "Time step = " << time.get_timestep() << ", at t = " << std::scientific << time.current() << std::endl;
       
   
-      newton_iteration(1e-9, 75, first_iteration);
+      newton_iteration(present_solution, 1e-9, 75, first_iteration, false);
 
       double norm_increment;
 
@@ -1192,12 +1231,10 @@ namespace coanda
 
       // Output
       if (time.time_to_output()) { output_results(time.get_timestep()); }
+
       if (time.time_to_refine())
       {
-        if (adaptive_refinement)
-        {
-          refine_mesh(0, 2);
-        }
+        if (adaptive_refinement) { refine_mesh(0, 2); }
       }
     }
   }
@@ -1226,8 +1263,10 @@ int main(int argc, char *argv[])
     const bool distort_mesh{true};
     const unsigned int fe_degree{2};
     const double stopping_criterion{1e-10};
+    const unsigned int n_glob_ref{0};
+    const unsigned int jacobian_update_step{1};
     
-    NS<2> bifurc_NS{adaptive_refinement, initial_guess, distort_mesh, fe_degree, stopping_criterion};
+    NS<2> bifurc_NS{adaptive_refinement, initial_guess, distort_mesh, fe_degree, stopping_criterion, n_glob_ref, jacobian_update_step};
     bifurc_NS.run();
   }
   catch (std::exception &exc)

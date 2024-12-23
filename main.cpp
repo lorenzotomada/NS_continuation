@@ -4,6 +4,7 @@
       1.1) Separate function for mesh-depending matrix and other components
       1.2) Ideally, theta-method (or at least K-N), taking into account the bdry conditions. Save f^n at each iteration (the RHS)
       1.3) Unique function (setup dofs + setup system)
+      1.4) Track the residual at the first iteration and/or the relative distance between iterations
     2) Perform tests
       2.1) Find the steady, stable solution
       2.2) Without mesh refinement, symmetrical mesh
@@ -488,7 +489,7 @@ namespace coanda
 
     void refine_mesh(const unsigned int min_grid_level, const unsigned int max_grid_level);
 
-    void output_results(const unsigned int output_index) const;
+    void output_results(const unsigned int output_index, const bool output_steady_solution=false) const;
 
     void newton_iteration(PETScWrappers::MPI::BlockVector &dst,
                           const double tolerance,
@@ -544,6 +545,8 @@ namespace coanda
     mutable TimerOutput timer;
 
     std::shared_ptr<SIMPLE> preconditioner;
+
+    std::vector<double> relative_distances;
   };
 
 
@@ -885,6 +888,7 @@ namespace coanda
         cell->get_dof_indices(local_dof_indices);
 
         const AffineConstraints<double> &constraints_used = first_iteration ? nonzero_constraints : zero_constraints;
+
         if (assemble_jacobian)
         {
           constraints_used.distribute_local_to_global(local_matrix, local_rhs, local_dof_indices, jacobian_matrix, system_rhs);
@@ -1010,7 +1014,7 @@ namespace coanda
         // between it and an asymmetrical one
         double guess_u_norm{steady_solution.block(0).l2_norm()};
 
-        if (use_continuation && guess_u_norm!=0 && !steady_system)  // reinit initial guess
+        if (use_continuation && guess_u_norm!=0 && !steady_system && line_search_n==0)  // reinit initial guess
         {
           PETScWrappers::MPI::BlockVector tmp_initial_guess;
           tmp_initial_guess.reinit(owned_partitioning, mpi_communicator);
@@ -1076,7 +1080,7 @@ namespace coanda
 
 
   template <int dim>
-  void NS<dim>::output_results(const unsigned int output_index) const
+  void NS<dim>::output_results(const unsigned int output_index, const bool output_steady_solution) const
   {
     TimerOutput::Scope timer_section(timer, "Output results");
     pcout << "Writing results..." << std::endl;
@@ -1089,11 +1093,21 @@ namespace coanda
                                                                               DataComponentInterpretation::component_is_part_of_vector
                                                                               );
     data_component_interpretation.push_back(DataComponentInterpretation::component_is_scalar);
+
     DataOut<dim> data_out;
     data_out.attach_dof_handler(dof_handler);
-    // vector to be output must be ghosted
 
-    data_out.add_data_vector(present_solution, solution_names, DataOut<dim>::type_dof_data, data_component_interpretation);
+    // vector to be output must be ghosted
+    if (!output_steady_solution)
+    { data_out.add_data_vector(present_solution, solution_names, DataOut<dim>::type_dof_data, data_component_interpretation); }
+
+    else
+    {
+      PETScWrappers::MPI::BlockVector tmp;
+      tmp.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
+      tmp = steady_solution;
+      data_out.add_data_vector(steady_solution, solution_names, DataOut<dim>::type_dof_data, data_component_interpretation); 
+    }
 
     // Partition
     Vector<float> subdomain(triangulation.n_active_cells());
@@ -1103,7 +1117,10 @@ namespace coanda
     data_out.add_data_vector(subdomain, "subdomain");
     data_out.build_patches(fe_degree + 1);
 
-    std::string basename = "navierstokes" + Utilities::int_to_string(output_index, 6) + "-";
+    std::string basename;
+    if (!output_steady_solution) { basename = "navierstokes" + Utilities::int_to_string(output_index, 6) + "-"; }
+    else { basename = "steady_solution"; }
+
     std::string filename = basename + Utilities::int_to_string(triangulation.locally_owned_subdomain(), 4) + ".vtu";
 
     std::ofstream output(filename);
@@ -1118,7 +1135,7 @@ namespace coanda
         times_and_names.push_back({time.current(), basename + Utilities::int_to_string(i, 4) + ".vtu"});
       }
 
-      std::ofstream pvd_output("navierstokes.pvd");
+      std::ofstream pvd_output(basename + ".pvd");
       DataOutBase::write_pvd_record(pvd_output, times_and_names);
     }
   }
@@ -1237,12 +1254,13 @@ namespace coanda
     if (use_continuation)
     {
       compute_initial_guess();
+      output_results(0, true); // save the steady solution
     }
 
     while ((time.end() - time.current() > 1e-12) && (!should_stop)) 
     {
 
-      if (time.get_timestep() == 0) { output_results(0); }
+      if (time.get_timestep() == 0) { output_results(0, false); }
 
       time.increment();
       std::cout.precision(6);
@@ -1267,6 +1285,7 @@ namespace coanda
 
       if (norm_increment < stopping_criterion) { should_stop = true; }
       pcout << " The relative distance between the two iterations is " << norm_increment << std::endl;
+      relative_distances.push_back(norm_increment);
 
       old_solution.reinit(owned_partitioning, mpi_communicator);
       old_solution = present_solution;
@@ -1274,7 +1293,7 @@ namespace coanda
       first_iteration = false;
 
       // Output
-      if (time.time_to_output()) { output_results(time.get_timestep()); }
+      if (time.time_to_output()) { output_results(time.get_timestep(), true); }
 
       if (time.time_to_refine())
       {

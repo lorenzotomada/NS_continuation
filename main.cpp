@@ -4,17 +4,15 @@
       1.1) Separate function for mesh-depending matrix and other components
       1.2) Ideally, theta-method (or at least K-N), taking into account the bdry conditions. Save f^n at each iteration (the RHS)
       1.3) Unique function (setup dofs + setup system)
-    2) Continuation algorithm
-      2.1) Continuation algorithm for the steady case
-      2.2) Use it to find the asymmetrical solution
-    3) Perform tests
-      3.1) Without mesh refinement, symmetrical mesh
-      3.2) Without mesh refinement, asymmetrical mesh
-      3.3) With mesh refinement, symmetrical mesh
-      3.4) With mesh refinement, symmetrical mesh, asymmetrical refinement (set refinement flag only e.g. if y > 7.5/2)
-      3.5) Combine with initial guesses and see what changes (either, if possible, trying to obtain the other branch, or to get immediately the unstable one)
-      3.6) At least hints for the 3D case
-    4) Move some material in utils.hpp, maybe remove first_iteration
+    2) Perform tests
+      2.1) Find the steady, stable solution
+      2.2) Without mesh refinement, symmetrical mesh
+      2.3) Without mesh refinement, asymmetrical mesh
+      2.4) With mesh refinement, symmetrical mesh
+      2.5) With mesh refinement, symmetrical mesh, asymmetrical refinement (set refinement flag only e.g. if y > 7.5/2)
+      2.6) Combine with initial guesses and see what changes (either, if possible, trying to obtain the other branch, or to get immediately the unstable one)
+      2.7) At least hints for the 3D case
+    3) Move some material in utils.hpp, maybe remove first_iteration
 * ------------------------------------------------------------------------------ */
 
 
@@ -458,21 +456,27 @@ namespace coanda
   template <int dim>
   class NS
   {
-  public:
+    public:
     NS(const bool adaptive_refinement,
-          const bool use_continuation,
-          const bool distort_mesh,
-          const unsigned int fe_degree,
-          const double stopping_criterion,
-          const unsigned int n_glob_ref,
-          const unsigned int jacobian_update_step
-          );
+      const bool use_continuation,
+      const bool distort_mesh,
+      const unsigned int fe_degree,
+      const double stopping_criterion,
+      const unsigned int n_glob_ref,
+      const unsigned int jacobian_update_step,
+      const double viscosity,
+      const double viscosity_begin_continuation=0, // not necessary to pass this if continuation is not used
+      const double continuation_step_size=0); // same
+
     void run();
+
     ~NS() { timer.print_summary(); }
 
 
-  private:
+    private:
+     
     void make_grid();
+
     void setup_dofs();
     void setup_system();
 
@@ -481,8 +485,11 @@ namespace coanda
     void assemble_rhs(const bool first_iteration, const bool steady_system=false);
 
     void solve(bool first_iteration);
+
     void refine_mesh(const unsigned int min_grid_level, const unsigned int max_grid_level);
+
     void output_results(const unsigned int output_index) const;
+
     void newton_iteration(PETScWrappers::MPI::BlockVector &dst,
                           const double tolerance,
                           const unsigned int max_n_line_searches,
@@ -492,23 +499,24 @@ namespace coanda
     void compute_initial_guess();
     
 
+    MPI_Comm mpi_communicator;
     const bool adaptive_refinement;
     const bool use_continuation;
     const bool distort_mesh; // done following https://www.dealii.org/current/doxygen/deal.II/step_49.html
-    MPI_Comm mpi_communicator;
-    double viscosity;
     const unsigned int fe_degree; // added wrt step 57
     const double stopping_criterion; // same
     const unsigned int n_glob_ref;
     const unsigned int jacobian_update_step;
-
-    std::vector<types::global_dof_index> dofs_per_block;
+    double viscosity;
+    const double viscosity_begin_continuation;
+    const double continuation_step_size;
 
     parallel::distributed::Triangulation<dim> triangulation;
     FESystem<dim> fe;
     DoFHandler<dim> dof_handler;
+
     QGauss<dim> quad_formula;
-    QGauss<dim - 1> face_quad_formula;
+    QGauss<dim-1> face_quad_formula;
 
     AffineConstraints<double> zero_constraints;
     AffineConstraints<double> nonzero_constraints;
@@ -519,14 +527,15 @@ namespace coanda
 
     PETScWrappers::MPI::BlockVector present_solution;
     PETScWrappers::MPI::BlockVector old_solution;
-    PETScWrappers::MPI::BlockVector solution_increment;
+    PETScWrappers::MPI::BlockVector steady_solution;
+
+    PETScWrappers::MPI::BlockVector evaluation_points;
     PETScWrappers::MPI::BlockVector newton_update;
     PETScWrappers::MPI::BlockVector system_rhs;
-    PETScWrappers::MPI::BlockVector evaluation_points;
-    PETScWrappers::MPI::BlockVector steady_solution;
-  
+
 
     ConditionalOStream pcout;
+    std::vector<types::global_dof_index> dofs_per_block;
     std::vector<IndexSet> owned_partitioning;
     std::vector<IndexSet> relevant_partitioning;
     IndexSet locally_relevant_dofs;
@@ -550,17 +559,22 @@ namespace coanda
               const unsigned int fe_degree,
               const double stopping_criterion,
               const unsigned int n_glob_ref,
-              const unsigned int jacobian_update_step
+              const unsigned int jacobian_update_step,
+              const double viscosity,
+              const double viscosity_begin_continuation,
+              const double continuation_step_size
               )
-    : adaptive_refinement(adaptive_refinement),
+    : mpi_communicator(MPI_COMM_WORLD),
+      adaptive_refinement(adaptive_refinement),
       use_continuation(use_continuation),
       distort_mesh(distort_mesh),
-      mpi_communicator(MPI_COMM_WORLD),
-      viscosity(0.5),
       fe_degree(fe_degree),
       stopping_criterion(stopping_criterion),
       n_glob_ref(n_glob_ref),
       jacobian_update_step(jacobian_update_step),
+      viscosity(viscosity),
+      viscosity_begin_continuation(viscosity_begin_continuation),
+      continuation_step_size(continuation_step_size),
       triangulation(mpi_communicator,
                     typename Triangulation<dim>::MeshSmoothing(Triangulation<dim>::smoothing_on_refinement |
                     Triangulation<dim>::smoothing_on_coarsening)),
@@ -653,7 +667,7 @@ namespace coanda
       }
     }
 
-    if (distort_mesh) { GridTools::distort_random(0.1, triangulation, true); }
+    if (distort_mesh) { GridTools::distort_random(0.05, triangulation, true); }
 
     std::ofstream out("mesh.vtk");
     GridOut grid_out;
@@ -1134,10 +1148,19 @@ namespace coanda
 
     for (auto cell = triangulation.begin_active(min_grid_level); cell != triangulation.end_active(min_grid_level); ++cell) { cell->clear_coarsen_flag(); }
 
-    parallel::distributed::SolutionTransfer<dim, PETScWrappers::MPI::BlockVector> trans(dof_handler);
+    parallel::distributed::SolutionTransfer<dim, PETScWrappers::MPI::BlockVector> trans1(dof_handler);
+    parallel::distributed::SolutionTransfer<dim, PETScWrappers::MPI::BlockVector> trans2(dof_handler);
 
     triangulation.prepare_coarsening_and_refinement();
-    trans.prepare_for_coarsening_and_refinement(present_solution);
+
+    trans1.prepare_for_coarsening_and_refinement(present_solution);
+
+    if (use_continuation)
+    {
+      trans2.prepare_for_coarsening_and_refinement(steady_solution); 
+    }
+    else { (void)trans2; }
+
     triangulation.execute_coarsening_and_refinement();
 
     // Reinitialize the system
@@ -1148,8 +1171,15 @@ namespace coanda
     // Need a non-ghosted vector for interpolation
     PETScWrappers::MPI::BlockVector tmp(newton_update);
     tmp = 0;
-    trans.interpolate(tmp);
+    trans1.interpolate(tmp);
     present_solution = tmp;
+
+    if (use_continuation) 
+    {
+      tmp = 0;
+      trans2.interpolate(tmp);
+      steady_solution = tmp;
+    }
   }
 
 
@@ -1161,7 +1191,21 @@ namespace coanda
   template <int dim>
   void NS<dim>::compute_initial_guess()
   {
-    pcout << "TODO!" << std::endl;
+    bool is_initial_step = true;
+    const double target_viscosity{viscosity};
+ 
+    for (double mu = viscosity_begin_continuation; mu >= target_viscosity; mu -= continuation_step_size)
+    {
+      viscosity = mu;
+      pcout << "Searching for initial guess with mu = " << mu << std::endl;
+
+      newton_iteration(steady_solution, 1e-7, 50, is_initial_step, true);
+      
+      is_initial_step = false;
+      if (mu==target_viscosity) { break; }
+    }
+
+    viscosity = target_viscosity;
   }
 
 
@@ -1252,29 +1296,45 @@ namespace coanda
 
 int main(int argc, char *argv[])
 {
-  try {
+  try
+  {
     using namespace dealii;
     using namespace coanda;
 
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
     
     const bool adaptive_refinement{true};
-    const bool initial_guess{false};
+    const bool use_continuation{true};
     const bool distort_mesh{true};
     const unsigned int fe_degree{2};
     const double stopping_criterion{1e-10};
     const unsigned int n_glob_ref{0};
-    const unsigned int jacobian_update_step{1};
+    const unsigned int jacobian_update_step{3};
+    const double viscosity{0.7};
+    const double viscosity_begin_continuation{0.72};
+    const double continuation_step_size{1e-2};
     
-    NS<2> bifurc_NS{adaptive_refinement, initial_guess, distort_mesh, fe_degree, stopping_criterion, n_glob_ref, jacobian_update_step};
+    NS<2> bifurc_NS{adaptive_refinement,
+                    use_continuation,
+                    distort_mesh,
+                    fe_degree,
+                    stopping_criterion,
+                    n_glob_ref,
+                    jacobian_update_step,
+                    viscosity,
+                    viscosity_begin_continuation,
+                    continuation_step_size};
+
     bifurc_NS.run();
   }
+
   catch (std::exception &exc)
   {
     std::cerr << std::endl << std::endl << "----------------------------------------------------" << std::endl;
     std::cerr << "Exception on processing: " << std::endl << exc.what() << std::endl << "Aborting!" << std::endl << "----------------------------------------------------" << std::endl;
     return 1;
   }
+
   catch (...)
   {
     std::cerr << std::endl << std::endl << "----------------------------------------------------" << std::endl;

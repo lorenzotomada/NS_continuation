@@ -1,10 +1,7 @@
 /* -----------------------------------------------------------------------------
  TODO:
     1) Numerical discretization
-      1.1) Separate function for mesh-depending matrix and other components
-      1.2) Ideally, theta-method (or at least K-N), taking into account the bdry conditions. Save f^n at each iteration (the RHS)
-      1.3) Unique function (setup dofs + setup system)
-      1.4) Track the residual at the first iteration and/or the relative distance between iterations
+      1.2) Ideally, theta-method (or at least K-N)
     2) Perform tests
       2.1) Find the steady, stable solution
       2.2) Without mesh refinement, symmetrical mesh
@@ -13,7 +10,10 @@
       2.5) With mesh refinement, symmetrical mesh, asymmetrical refinement (set refinement flag only e.g. if y > 7.5/2)
       2.6) Combine with initial guesses and see what changes (either, if possible, trying to obtain the other branch, or to get immediately the unstable one)
       2.7) At least hints for the 3D case
-    3) Move some material in utils.hpp, maybe remove first_iteration
+    3) Explain some details
+      3.1) Why there is not a separate function for mesh-depending matrix and other components
+      3.2) Why no trapezoidal rule
+      3.3) Why need to keep first_iteration
 * ------------------------------------------------------------------------------ */
 
 
@@ -99,8 +99,6 @@ namespace coanda
 
 // ------------------------------- TIME CLASS -------------------------------
 
-
-
   class Time
   {
   public:
@@ -138,8 +136,6 @@ namespace coanda
 
 // -------------------- TIME UTILITIES --------------------
 
-
-
   bool Time::time_to_output() const
   {
     unsigned int delta = static_cast<unsigned int>(output_interval / delta_t);
@@ -164,8 +160,6 @@ namespace coanda
 
 // -------------------- DBCs --------------------
 
-
-
   template <int dim>
   class BoundaryValues : public Function<dim>
   {
@@ -180,8 +174,6 @@ namespace coanda
 
 // -------------------- BOUNDARY VALUES VALUE FUNCTION --------------------
   
-
-
   template <int dim>
   double BoundaryValues<dim>::value(const Point<dim> &p, const unsigned int component) const
   {
@@ -211,8 +203,6 @@ namespace coanda
 
 // -------------------- BOUNDARY VALUES VECTOR VALUE --------------------
 
-
-
   template <int dim>
   void BoundaryValues<dim>::vector_value(const Point<dim> &p, Vector<double> &values) const 
   {
@@ -222,8 +212,6 @@ namespace coanda
 
 
 // -------------------- SCHUR COMPLEMENT SPARSITY --------------------
-
-
 
   inline void schur_complement_sparsity(DynamicSparsityPattern &dst, const PETScWrappers::MPI::BlockSparseMatrix &src)
   {
@@ -253,8 +241,6 @@ namespace coanda
 
 // -------------------- SCHUR COMPLEMENT --------------------
 
-
-
   inline void schur_complement(PETScWrappers::MPI::SparseMatrix &dst, const PETScWrappers::MPI::BlockSparseMatrix &src, const PETScWrappers::MPI::Vector &diag_A00_inverse)
   {
     PETScWrappers::MPI::SparseMatrix tmp_mat;
@@ -269,8 +255,6 @@ namespace coanda
 
 
 // -------------------- SIMPLE PRECONDITIONER --------------------
-
-
 
   class SIMPLE : public Subscriptor
   {
@@ -316,8 +300,6 @@ namespace coanda
 
 // --------------------- SIMPLE::CONSTRUCTOR ---------------------
 
-
-
   SIMPLE::SIMPLE(MPI_Comm mpi_communicator,
                 TimerOutput &timer,
                 const std::vector<IndexSet> &owned_partitioning,
@@ -336,8 +318,6 @@ namespace coanda
 
 // --------------------- INITIALIZE SCHUR ---------------------
 
-
-
   void SIMPLE::initialize_schur()
   {
     DynamicSparsityPattern dsp_schur(relevant_partitioning[1]);
@@ -351,8 +331,6 @@ namespace coanda
 
 // -------------------- INITIALIZE --------------------
 
-
-
   void SIMPLE::initialize()
   {
     diag_F_inv.reinit(owned_partitioning[0], mpi_communicator);
@@ -364,8 +342,6 @@ namespace coanda
 
 
 // --------------------- ASSEMBLE ---------------------
-
-
 
   void SIMPLE::assemble()
   {
@@ -392,8 +368,6 @@ namespace coanda
 
 
 // --------------------- VMULT_L ---------------------
-
-
 
   void SIMPLE::vmult_L(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const
   {
@@ -436,8 +410,6 @@ namespace coanda
 
 // --------------------- VMULT_U ---------------------
 
-
-
   void SIMPLE::vmult_U(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const
   {
     dst.block(1) = src.block(1); // d1 = s1
@@ -451,8 +423,6 @@ namespace coanda
 
 
 // ------------------------------------ NS CLASS ----------------------------------- //
-
-
 
   template <int dim>
   class NS
@@ -485,7 +455,7 @@ namespace coanda
     void assemble_system(const bool first_iteration, const bool steady_system=false);
     void assemble_rhs(const bool first_iteration, const bool steady_system=false);
 
-    void solve(bool first_iteration);
+    void solve(const bool first_iteration);
 
     void refine_mesh(const unsigned int min_grid_level, const unsigned int max_grid_level);
 
@@ -547,13 +517,12 @@ namespace coanda
     std::shared_ptr<SIMPLE> preconditioner;
 
     std::vector<double> relative_distances;
+    std::vector<double> residuals_at_first_iteration;
   };
 
 
 
 // -------------------- CONSTRUCTOR --------------------
-
-
 
   template <int dim>
   NS<dim>::NS(const bool adaptive_refinement,
@@ -595,8 +564,6 @@ namespace coanda
 
 
 // -------------------- CREATE THE GRID --------------------
-
-
 
   template <int dim>
   void NS<dim>::make_grid()
@@ -681,8 +648,6 @@ namespace coanda
 
 // ------------------------------ SETUP DOFS ------------------------------
 
-
-
   template <int dim>
   void NS<dim>::setup_dofs()
   {
@@ -747,8 +712,6 @@ namespace coanda
   
 // --------------------- SETUP SYSTEM ---------------------
   
-  
-  
   template <int dim>
   void NS<dim>::setup_system()
   {
@@ -779,10 +742,8 @@ namespace coanda
 
 // -------------------- ASSEMBLE THE JACOBIAN --------------------
 
-
-
   template <int dim>
-  void NS<dim>::assemble(bool first_iteration, bool assemble_jacobian, const bool steady_system)
+  void NS<dim>::assemble(const bool first_iteration, const bool assemble_jacobian, const bool steady_system)
   {
     TimerOutput::Scope timer_section(timer, "Assemble system");
     
@@ -913,8 +874,6 @@ namespace coanda
 
 // -------------------- ASSEMBLE THE SYSTEM --------------------
 
-
-
   template <int dim>
   void NS<dim>::assemble_system(const bool first_iteration, const bool steady_system)
   {
@@ -925,8 +884,6 @@ namespace coanda
 
 
 // -------------------- ASSEMBLE THE RESIDUAL --------------------
-
-
 
   template <int dim>
   void NS<dim>::assemble_rhs(const bool first_iteration, const bool steady_system)
@@ -939,8 +896,6 @@ namespace coanda
 
 // -------------------- SOLVE --------------------
 
-
- 
   template <int dim>
   void NS<dim>::solve(const bool first_iteration)
   {
@@ -965,8 +920,6 @@ namespace coanda
 
 // -------------------- NEWTON ITERATION --------------------
 
-
-
   template <int dim>
   void NS<dim>::newton_iteration(PETScWrappers::MPI::BlockVector &dst,
                                 const double tolerance,
@@ -975,10 +928,10 @@ namespace coanda
                                 const bool steady_system
                                 )
   {
-    bool first_iteration = is_initial_step;
-    unsigned int line_search_n = 0;
-    double last_res = 1.0;
-    double current_res = 1.0;
+    bool first_iteration{is_initial_step};
+    unsigned int line_search_n{0};
+    double last_res{1.0};
+    double current_res{1.0};
  
     while ((first_iteration || (current_res > tolerance)) && line_search_n < max_n_line_searches)
     {
@@ -1066,6 +1019,7 @@ namespace coanda
         {
           std::cout << "  number of line searches: " << line_search_n << "  residual: " << current_res << std::endl;
           last_res = current_res;
+          residuals_at_first_iteration.push_back(last_res);
         }
         
         ++line_search_n;
@@ -1076,8 +1030,6 @@ namespace coanda
 
 
 // -------------------- OUTPUT RESULTS --------------------
-
-
 
   template <int dim>
   void NS<dim>::output_results(const unsigned int output_index, const bool output_steady_solution) const
@@ -1144,8 +1096,6 @@ namespace coanda
  
 // -------------------- REFINE MESH --------------------
 
-
-
   template <int dim>
   void NS<dim>::refine_mesh(const unsigned int min_grid_level, const unsigned int max_grid_level)
   {
@@ -1203,8 +1153,6 @@ namespace coanda
 
 // -------------------- COMPUTE INITIAL GUESS --------------------
 
-
-
   template <int dim>
   void NS<dim>::compute_initial_guess()
   {
@@ -1216,7 +1164,8 @@ namespace coanda
       viscosity = mu;
       pcout << "Searching for initial guess with mu = " << mu << std::endl;
 
-      newton_iteration(steady_solution, 1e-7, 50, is_initial_step, true);
+      const bool steady_system{true};
+      newton_iteration(steady_solution, 1e-7, 50, is_initial_step, steady_system);
       
       is_initial_step = false;
       if (mu==target_viscosity) { break; }
@@ -1228,8 +1177,6 @@ namespace coanda
 
 
 // -------------------- RUN --------------------
-
-
 
   template <int dim>
   void NS<dim>::run()
@@ -1307,11 +1254,7 @@ namespace coanda
 
 
 
-// -------------------- MAIN FUNCTION --------------------
-
-
-
-
+// ------------------------------- MAIN FUNCTION ------------------------------
 
 int main(int argc, char *argv[])
 {
@@ -1323,12 +1266,12 @@ int main(int argc, char *argv[])
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
     
     const bool adaptive_refinement{true};
-    const bool use_continuation{true};
-    const bool distort_mesh{true};
-    const unsigned int fe_degree{2};
+    const bool use_continuation{false};
+    const bool distort_mesh{false};
+    const unsigned int fe_degree{1};
     const double stopping_criterion{1e-10};
     const unsigned int n_glob_ref{0};
-    const unsigned int jacobian_update_step{3};
+    const unsigned int jacobian_update_step{5};
     const double viscosity{0.7};
     const double viscosity_begin_continuation{0.72};
     const double continuation_step_size{1e-2};

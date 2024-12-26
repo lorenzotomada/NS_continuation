@@ -575,7 +575,7 @@ namespace coanda
 
     if constexpr (dim == 2) // Checking with constexpr because it is known already at compile-time
     {
-      std::vector<unsigned int> subdivisions{65, 12};
+      std::vector<unsigned int> subdivisions{45, 10};
       GridGenerator::subdivided_hyper_rectangle(rectangle, subdivisions, Point<2>(0, 0), Point<2>(50, 7.5));
     }
     else
@@ -990,7 +990,7 @@ namespace coanda
 
         else { evaluation_points = dst; }
 
-        if (line_search_n%jacobian_update_step == 0) { assemble_system(first_iteration); /* We do not update the Jacobian at each iteration to reduce the cost */ }
+        if (line_search_n%jacobian_update_step == 0 || line_search_n < 5) { assemble_system(first_iteration); /* We do not update the Jacobian at each iteration to reduce the cost */ }
         else { assemble_rhs(first_iteration); }
         solve(first_iteration);
  
@@ -1006,7 +1006,7 @@ namespace coanda
           evaluation_points += tmp;
 
           nonzero_constraints.distribute(evaluation_points);
-          assemble_rhs(first_iteration);
+          assemble_rhs(true); // we assemble taking into account the boundary conditions
           current_res = system_rhs.l2_norm();
           std::cout << "    alpha: " << std::setw(10) << alpha << std::setw(0) << "  residual: " << current_res << std::endl;
           if (current_res < last_res)
@@ -1214,8 +1214,8 @@ namespace coanda
       std::cout.width(12);
       pcout << std::string(96, '*') << std::endl << "Time step = " << time.get_timestep() << ", at t = " << std::scientific << time.current() << std::endl;
       
-  
-      newton_iteration(present_solution, 1e-9, 75, first_iteration, false);
+      const bool steady_system{false};
+      newton_iteration(present_solution, 1e-9, 75, first_iteration, steady_system);
 
       double norm_increment;
 
@@ -1270,7 +1270,7 @@ int main(int argc, char *argv[])
     const bool distort_mesh{false};
     const unsigned int fe_degree{1};
     const double stopping_criterion{1e-10};
-    const unsigned int n_glob_ref{0};
+    const unsigned int n_glob_ref{1};
     const unsigned int jacobian_update_step{5};
     const double viscosity{0.7};
     const double viscosity_begin_continuation{0.72};

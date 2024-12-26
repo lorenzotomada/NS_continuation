@@ -1,19 +1,18 @@
 /* -----------------------------------------------------------------------------
  TODO:
-    1) Numerical discretization
-      1.2) Ideally, theta-method (or at least K-N)
-    2) Perform tests
-      2.1) Find the steady, stable solution
-      2.2) Without mesh refinement, symmetrical mesh
-      2.3) Without mesh refinement, asymmetrical mesh
-      2.4) With mesh refinement, symmetrical mesh
-      2.5) With mesh refinement, symmetrical mesh, asymmetrical refinement (set refinement flag only e.g. if y > 7.5/2)
-      2.6) Combine with initial guesses and see what changes (either, if possible, trying to obtain the other branch, or to get immediately the unstable one)
-      2.7) At least hints for the 3D case
-    3) Explain some details
-      3.1) Why there is not a separate function for mesh-depending matrix and other components
-      3.2) Why no trapezoidal rule
-      3.3) Why need to keep first_iteration
+    0) Solve the problem related to the first iteration of Newton's method
+    1) Perform tests
+      1.1) Find the steady, stable solution
+      1.2) Without mesh refinement, symmetrical mesh
+      1.3) Without mesh refinement, asymmetrical mesh
+      1.4) With mesh refinement, symmetrical mesh
+      1.5) With mesh refinement, symmetrical mesh, asymmetrical refinement (set refinement flag only e.g. if y > 7.5/2)
+      1.6) Combine with initial guesses and see what changes (either, if possible, trying to obtain the other branch, or to get immediately the unstable one)
+      1.7) At least hints for the 3D case
+    2) Explain some details
+      2.1) Why there is not a separate function for mesh-depending matrix and other components
+      2.2) Why no trapezoidal rule
+      2.3) Why need to keep first_iteration
 * ------------------------------------------------------------------------------ */
 
 
@@ -428,7 +427,8 @@ namespace coanda
   class NS
   {
     public:
-    NS(const bool adaptive_refinement,
+    NS(const double theta,
+      const bool adaptive_refinement,
       const bool use_continuation,
       const bool distort_mesh,
       const unsigned int fe_degree,
@@ -471,6 +471,7 @@ namespace coanda
     
 
     MPI_Comm mpi_communicator;
+    const double theta;
     const bool adaptive_refinement;
     const bool use_continuation;
     const bool distort_mesh; // done following https://www.dealii.org/current/doxygen/deal.II/step_49.html
@@ -525,7 +526,8 @@ namespace coanda
 // -------------------- CONSTRUCTOR --------------------
 
   template <int dim>
-  NS<dim>::NS(const bool adaptive_refinement,
+  NS<dim>::NS(const double theta,
+              const bool adaptive_refinement,
               const bool use_continuation,
               const bool distort_mesh,
               const unsigned int fe_degree,
@@ -537,6 +539,7 @@ namespace coanda
               const double continuation_step_size
               )
     : mpi_communicator(MPI_COMM_WORLD),
+      theta(theta),
       adaptive_refinement(adaptive_refinement),
       use_continuation(use_continuation),
       distort_mesh(distort_mesh),
@@ -555,7 +558,7 @@ namespace coanda
       quad_formula(fe_degree + 2),
       face_quad_formula(fe_degree + 2),
       pcout(std::cout, Utilities::MPI::this_mpi_process(mpi_communicator) == 0),
-      time(20, 1e-2, 1e-1, 1e-1),
+      time(20, 1e-2, 1e-2, 1e-1),
       timer(mpi_communicator, pcout, TimerOutput::never, TimerOutput::wall_times)  
   {
     make_grid();
@@ -747,10 +750,7 @@ namespace coanda
   {
     TimerOutput::Scope timer_section(timer, "Assemble system");
     
-    if (assemble_jacobian)
-    {
-      jacobian_matrix = 0;
-    }
+    if (assemble_jacobian) { jacobian_matrix = 0; }
 
     system_rhs = 0;
 
@@ -763,15 +763,23 @@ namespace coanda
     const FEValuesExtractors::Scalar pressure(dim);
 
     FullMatrix<double> local_matrix(dofs_per_cell, dofs_per_cell);
-    Vector<double>     local_rhs(dofs_per_cell);
+    Vector<double> local_rhs(dofs_per_cell);
 
     std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
 
     std::vector<Tensor<1, dim>> present_velocity_values(n_q_points);
     std::vector<Tensor<2, dim>> present_velocity_gradients(n_q_points);
+
+    std::vector<Tensor<1, dim>> old_velocity_values(n_q_points);
+    std::vector<Tensor<2, dim>> old_velocity_gradients(n_q_points);
+
     std::vector<Tensor<1, dim>> tmp(n_q_points); // present velocity - old solution velocity
+
     std::vector<double> present_velocity_divergences(n_q_points);
     std::vector<double> present_pressure_values(n_q_points);
+
+    std::vector<double> old_velocity_divergences(n_q_points);
+    std::vector<double> old_pressure_values(n_q_points);
 
     std::vector<double> div_phi_u(dofs_per_cell);
     std::vector<Tensor<1, dim>> phi_u(dofs_per_cell);
@@ -793,10 +801,16 @@ namespace coanda
         local_rhs = 0;
 
         fe_values[velocities].get_function_values(evaluation_points, present_velocity_values);
-        fe_values[velocities].get_function_values(old_solution, tmp);
         fe_values[velocities].get_function_gradients(evaluation_points, present_velocity_gradients);
         fe_values[velocities].get_function_divergences(evaluation_points, present_velocity_divergences);
         fe_values[pressure].get_function_values(evaluation_points, present_pressure_values);
+
+        fe_values[velocities].get_function_values(old_solution, old_velocity_values);
+        fe_values[velocities].get_function_gradients(old_solution, old_velocity_gradients);
+        fe_values[velocities].get_function_divergences(old_solution, old_velocity_divergences);
+        fe_values[pressure].get_function_values(old_solution, old_pressure_values);
+
+        fe_values[velocities].get_function_values(old_solution, tmp);
 
         for (size_t i = 0; i < tmp.size(); ++i) { tmp[i] -= present_velocity_values[i]; }
 
@@ -816,32 +830,62 @@ namespace coanda
             {
               for (unsigned int j = 0; j < dofs_per_cell; ++j)
               {  
-                double mass_matrix_contribution = ((phi_u[i] * phi_u[j]) / time.get_delta_t())
-                                                   * fe_values.JxW(q);                //   From time stepping, 1/dt*M);
-                local_matrix(i,j) += (
-                      viscosity * scalar_product(grad_phi_u[i], grad_phi_u[j])        //   a(u, v) ---> mu*grad(u)*grad(v)  
-                      - div_phi_u[i] * phi_p[j]                                       //   b(v, p) = -p*div(v)   
-                      - phi_p[i] * div_phi_u[j]                                       //   b(u, q) = -q*div(u) 
-                      + phi_u[i] * (present_velocity_gradients[q] * phi_u[j])         //   Linearization of the convective term (pt. 1) 
-                      + phi_u[i] * (present_velocity_values[q] * grad_phi_u[j])       //   Linearization of the convective term (pt. 2) 
-                      ) * fe_values.JxW(q);                                           //   JxW, integration weights   
+                const double mass_matrix_contribution = ((phi_u[i] * phi_u[j]) / time.get_delta_t())
+                                                   * fe_values.JxW(q);                              //   From time stepping, 1/dt*M);
 
-                if (!steady_system) { local_matrix(i, j) += mass_matrix_contribution; }
+                const double quantity1 = viscosity * scalar_product(grad_phi_u[i], grad_phi_u[j])   //   a(u, v) ---> mu*grad(u)*grad(v)  
+                      + phi_u[i] * (present_velocity_gradients[q] * phi_u[j])                       //   Linearization of the convective term (pt. 1) 
+                      + phi_u[i] * (present_velocity_values[q] * grad_phi_u[j]);                    //   Linearization of the convective term (pt. 2) 
+                
+                const double quantity2 = - div_phi_u[i] * phi_p[j]                                  //   b(v, p) = -p*div(v)   
+                      - phi_p[i] * div_phi_u[j];                                                    //   b(u, q) = -q*div(u)  
+
+                if (!steady_system)
+                {
+                  local_matrix(i, j) += mass_matrix_contribution;
+                  local_matrix(i, j) += ((theta*quantity1 + quantity2)*fe_values.JxW(q)); // fully implicit in the terms involving B
+                }
+
+                else { local_matrix(i, j) += (quantity1 + quantity2); }
               }
             }
 
             double present_velocity_divergence = trace(present_velocity_gradients[q]);
+            double old_velocity_divergence = trace(old_velocity_gradients[q]);
 
             double mass_matrix_contribution = ((phi_u[i]*tmp[q]) / time.get_delta_t())* fe_values.JxW(q);
 
-            local_rhs(i) += (
-                          -viscosity * scalar_product(grad_phi_u[i], present_velocity_gradients[q])
-                          - phi_u[i] * (present_velocity_gradients[q] * present_velocity_values[q])
-                          + div_phi_u[i] * present_pressure_values[q]
-                          + phi_p[i] * present_velocity_divergence
-                          ) * fe_values.JxW(q);
+            // contributions from the right hand-side at times t^n and t^{n+1}
 
-            if (!steady_system) { local_rhs(i) += mass_matrix_contribution; }
+            if (!steady_system)
+            {
+              local_rhs(i) += mass_matrix_contribution;
+            
+              local_rhs(i) += (theta*(
+                        -viscosity * scalar_product(grad_phi_u[i], present_velocity_gradients[q])
+                        - phi_u[i] * (present_velocity_gradients[q] * present_velocity_values[q])
+                        + div_phi_u[i] * present_pressure_values[q]
+                        + phi_p[i] * present_velocity_divergence)
+                        ) * fe_values.JxW(q);
+
+              local_rhs(i) += (
+                        (1-theta)*(
+                        -viscosity * scalar_product(grad_phi_u[i], old_velocity_gradients[q])
+                        - phi_u[i] * (old_velocity_gradients[q] * old_velocity_values[q])
+                        + div_phi_u[i] * old_pressure_values[q]
+                        + phi_p[i] * old_velocity_divergence)
+                        ) * fe_values.JxW(q);
+            }
+
+            else
+            {
+              local_rhs(i) += (
+                        -viscosity * scalar_product(grad_phi_u[i], present_velocity_gradients[q])
+                        - phi_u[i] * (present_velocity_gradients[q] * present_velocity_values[q])
+                        + div_phi_u[i] * present_pressure_values[q]
+                        + phi_p[i] * present_velocity_divergence
+                        ) * fe_values.JxW(q);
+            }
           }
         }
 
@@ -854,6 +898,7 @@ namespace coanda
         {
           constraints_used.distribute_local_to_global(local_matrix, local_rhs, local_dof_indices, jacobian_matrix, system_rhs);
         }
+
         else
         {
           constraints_used.distribute_local_to_global(local_rhs, local_dof_indices, system_rhs);
@@ -1201,7 +1246,8 @@ namespace coanda
     if (use_continuation)
     {
       compute_initial_guess();
-      output_results(0, true); // save the steady solution
+      const bool output_steady_solution{true};
+      output_results(0, output_steady_solution); // save the steady solution
     }
 
     while ((time.end() - time.current() > 1e-12) && (!should_stop)) 
@@ -1240,7 +1286,11 @@ namespace coanda
       first_iteration = false;
 
       // Output
-      if (time.time_to_output()) { output_results(time.get_timestep(), true); }
+      if (time.time_to_output())
+      {
+        const bool output_steady_solution{false};
+        output_results(time.get_timestep(), output_steady_solution);
+      }
 
       if (time.time_to_refine())
       {
@@ -1265,9 +1315,10 @@ int main(int argc, char *argv[])
 
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
     
+    const double theta{0.5}; // using the trapezoidal rule to integrate in time
     const bool adaptive_refinement{true};
-    const bool use_continuation{false};
-    const bool distort_mesh{false};
+    const bool use_continuation{true};
+    const bool distort_mesh{true};
     const unsigned int fe_degree{1};
     const double stopping_criterion{1e-10};
     const unsigned int n_glob_ref{1};
@@ -1276,7 +1327,8 @@ int main(int argc, char *argv[])
     const double viscosity_begin_continuation{0.72};
     const double continuation_step_size{1e-2};
     
-    NS<2> bifurc_NS{adaptive_refinement,
+    NS<2> bifurc_NS{theta,
+                    adaptive_refinement,
                     use_continuation,
                     distort_mesh,
                     fe_degree,

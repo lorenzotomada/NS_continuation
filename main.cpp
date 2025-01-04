@@ -16,6 +16,7 @@
 * ------------------------------------------------------------------------------ */
 
 
+
 #include <deal.II/base/function.h>
 #include <deal.II/base/logstream.h>
 #include <deal.II/base/quadrature_lib.h>
@@ -85,10 +86,7 @@
 
 
 
-
 // --------------------------------------------- NAMESPACE COANDA ---------------------------------------------
-
-
 
 namespace coanda
 {
@@ -372,7 +370,7 @@ namespace coanda
   {
     TimerOutput::Scope timer_section(timer, "GMRES for preconditioner");
 
-    SolverControl F_inv_control(20000, 1e-3 * src.block(0).l2_norm());
+    SolverControl F_inv_control(20000, 1e-5 * src.block(0).l2_norm());
     PETScWrappers::SolverGMRES F_solver(F_inv_control, jacobian_matrix->get_mpi_communicator());
 
     PETScWrappers::PreconditionBoomerAMG F_inv_preconditioner(mpi_communicator, PETScWrappers::PreconditionBoomerAMG::AdditionalData());
@@ -383,7 +381,7 @@ namespace coanda
     (*jacobian_matrix).block(1, 0).vmult(tmp.block(1), dst.block(0)); // t1 = (-B) * d0
 
     tmp.block(1).add(-1.0, src.block(1)); // t1 -= s1
-    SolverControl Schur_inv_control(20000, 1e-3 * src.block(1).l2_norm());
+    SolverControl Schur_inv_control(20000, 1e-5 * src.block(1).l2_norm());
     PETScWrappers::SolverGMRES Schur_solver(Schur_inv_control, mpi_communicator);
 
     PETScWrappers::PreconditionBoomerAMG Schur_inv_preconditioner(mpi_communicator, PETScWrappers::PreconditionBoomerAMG::AdditionalData());
@@ -829,10 +827,7 @@ namespace coanda
             if (assemble_jacobian)
             {
               for (unsigned int j = 0; j < dofs_per_cell; ++j)
-              {  
-                const double mass_matrix_contribution = ((phi_u[i] * phi_u[j]) / time.get_delta_t())
-                                                   * fe_values.JxW(q);                              //   From time stepping, 1/dt*M);
-
+              {
                 const double quantity1 = viscosity * scalar_product(grad_phi_u[i], grad_phi_u[j])   //   a(u, v) ---> mu*grad(u)*grad(v)  
                       + phi_u[i] * (present_velocity_gradients[q] * phi_u[j])                       //   Linearization of the convective term (pt. 1) 
                       + phi_u[i] * (present_velocity_values[q] * grad_phi_u[j]);                    //   Linearization of the convective term (pt. 2) 
@@ -842,23 +837,25 @@ namespace coanda
 
                 if (!steady_system)
                 {
+                  const double mass_matrix_contribution = ((phi_u[i] * phi_u[j]) / time.get_delta_t())
+                                                   * fe_values.JxW(q);                              //   From time stepping, 1/dt*M
+
                   local_matrix(i, j) += mass_matrix_contribution;
                   local_matrix(i, j) += ((theta*quantity1 + quantity2)*fe_values.JxW(q)); // fully implicit in the terms involving B
                 }
 
-                else { local_matrix(i, j) += (quantity1 + quantity2); }
+                else { local_matrix(i, j) += (quantity1 + quantity2)*fe_values.JxW(q); }
               }
             }
 
             double present_velocity_divergence = trace(present_velocity_gradients[q]);
             double old_velocity_divergence = trace(old_velocity_gradients[q]);
 
-            double mass_matrix_contribution = ((phi_u[i]*tmp[q]) / time.get_delta_t())* fe_values.JxW(q);
-
             // contributions from the right hand-side at times t^n and t^{n+1}
 
             if (!steady_system)
             {
+              double mass_matrix_contribution = ((phi_u[i]*tmp[q]) / time.get_delta_t())* fe_values.JxW(q);
               local_rhs(i) += mass_matrix_contribution;
             
               local_rhs(i) += (theta*(
@@ -908,7 +905,7 @@ namespace coanda
       if (assemble_jacobian)
       {
         jacobian_matrix.compress(VectorOperation::add);
-        jacobian_matrix.block(1, 1) = 0;
+        //jacobian_matrix.block(1, 1) = 0;
       }
 
       system_rhs.compress(VectorOperation::add);
@@ -950,13 +947,13 @@ namespace coanda
 
     preconditioner -> assemble();
 
-    SolverControl solver_control(/* jacobian_matrix.m() */ 50000, 1e-4 * system_rhs.l2_norm(), true);
+    SolverControl solver_control(/* jacobian_matrix.m() */ 50000, 1e-5 * system_rhs.l2_norm(), true);
     
     GrowingVectorMemory<PETScWrappers::MPI::BlockVector> vector_memory;
     SolverFGMRES<PETScWrappers::MPI::BlockVector> gmres(solver_control, vector_memory);
 
     gmres.solve(jacobian_matrix, newton_update, system_rhs, *preconditioner);
-    // pcout << "FGMRES steps: " << solver_control.last_step() << std::endl;
+    pcout << "  FGMRES steps: " << solver_control.last_step() << std::endl;
  
     constraints_used.distribute(newton_update);
   }
@@ -966,7 +963,8 @@ namespace coanda
 // -------------------- NEWTON ITERATION --------------------
 
   template <int dim>
-  void NS<dim>::newton_iteration(PETScWrappers::MPI::BlockVector &dst,
+  void NS<dim>::newton_iteration(
+                                PETScWrappers::MPI::BlockVector &dst,
                                 const double tolerance,
                                 const unsigned int max_n_line_searches,
                                 const bool is_initial_step,
@@ -987,25 +985,27 @@ namespace coanda
 
         evaluation_points = dst;
 
-        assemble_system(first_iteration);
+        assemble_system(first_iteration, steady_system);
         solve(first_iteration);
 
         PETScWrappers::MPI::BlockVector tmp;
         tmp.reinit(owned_partitioning, mpi_communicator);
         tmp = newton_update; // initial condition is 0, no need to add anything (adding 0)
-        
         nonzero_constraints.distribute(tmp);
+
         dst = tmp;
         // try to write  present_solution = newton_update;
 
         first_iteration = false;
         evaluation_points = dst;
 
-        assemble_rhs(first_iteration);
+        assemble_rhs(first_iteration, steady_system);
+
         current_res = system_rhs.l2_norm();
         pcout << "  The residual of initial guess is " << current_res << std::endl;
         last_res = current_res;
       }
+
       else
       {
         // Choose the initial guess for Netwon's method: either the solution at the previous time step, or a linear combination 
@@ -1026,7 +1026,7 @@ namespace coanda
           evaluation_points.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
           tmp_initial_guess.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
           tmp_initial_guess += old_solution; // if alpha = 0, || initial_guess - old solution || = 0, so that initial_guess = old solution
-                                                 // and I should only weight it with the initial guess so alpha should multiply the previous solution
+                                            // and I should only weight it with the initial guess so alpha should multiply the previous solution
           tmp_initial_guess *= alpha;
           evaluation_points = steady_solution;  // (1-alpha)* initial_guess
           evaluation_points *= (1.0-alpha);
@@ -1035,8 +1035,10 @@ namespace coanda
 
         else { evaluation_points = dst; }
 
-        if (line_search_n%jacobian_update_step == 0 || line_search_n < 5) { assemble_system(first_iteration); /* We do not update the Jacobian at each iteration to reduce the cost */ }
-        else { assemble_rhs(first_iteration); }
+        // We do not update the Jacobian at each iteration to reduce the cost
+        if (line_search_n % jacobian_update_step == 0 || line_search_n < 3) { assemble_system(first_iteration, steady_system); }
+        else { assemble_rhs(first_iteration, steady_system); }
+        
         solve(first_iteration);
  
         for (double alpha = 1.0; alpha > 1e-5; alpha *= 0.5)
@@ -1051,7 +1053,8 @@ namespace coanda
           evaluation_points += tmp;
 
           nonzero_constraints.distribute(evaluation_points);
-          assemble_rhs(true); // we assemble taking into account the boundary conditions
+          assemble_rhs(first_iteration, steady_system); // we assemble taking into account the boundary conditions
+
           current_res = system_rhs.l2_norm();
           std::cout << "    alpha: " << std::setw(10) << alpha << std::setw(0) << "  residual: " << current_res << std::endl;
           if (current_res < last_res)
@@ -1317,12 +1320,12 @@ int main(int argc, char *argv[])
     
     const double theta{0.5}; // using the trapezoidal rule to integrate in time
     const bool adaptive_refinement{true};
-    const bool use_continuation{true};
-    const bool distort_mesh{true};
+    const bool use_continuation{false};
+    const bool distort_mesh{false};
     const unsigned int fe_degree{1};
     const double stopping_criterion{1e-10};
     const unsigned int n_glob_ref{1};
-    const unsigned int jacobian_update_step{5};
+    const unsigned int jacobian_update_step{4};
     const double viscosity{0.7};
     const double viscosity_begin_continuation{0.72};
     const double continuation_step_size{1e-2};

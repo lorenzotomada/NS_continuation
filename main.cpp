@@ -13,6 +13,7 @@
       2.1) Why there is not a separate function for mesh-depending matrix and other components
       2.2) Why no trapezoidal rule
       2.3) Why need to keep first_iteration
+      2.4) Why two preconditioners are used 
 * ------------------------------------------------------------------------------ */
 
 
@@ -370,7 +371,7 @@ namespace coanda
   {
     TimerOutput::Scope timer_section(timer, "GMRES for preconditioner");
 
-    SolverControl F_inv_control(20000, 1e-5 * src.block(0).l2_norm());
+    SolverControl F_inv_control(20000, 1e-6 * src.block(0).l2_norm());
     PETScWrappers::SolverGMRES F_solver(F_inv_control, jacobian_matrix->get_mpi_communicator());
 
     PETScWrappers::PreconditionBoomerAMG F_inv_preconditioner(mpi_communicator, PETScWrappers::PreconditionBoomerAMG::AdditionalData());
@@ -381,7 +382,7 @@ namespace coanda
     (*jacobian_matrix).block(1, 0).vmult(tmp.block(1), dst.block(0)); // t1 = (-B) * d0
 
     tmp.block(1).add(-1.0, src.block(1)); // t1 -= s1
-    SolverControl Schur_inv_control(20000, 1e-5 * src.block(1).l2_norm());
+    SolverControl Schur_inv_control(20000, 1e-6 * src.block(1).l2_norm());
     PETScWrappers::SolverGMRES Schur_solver(Schur_inv_control, mpi_communicator);
 
     PETScWrappers::PreconditionBoomerAMG Schur_inv_preconditioner(mpi_communicator, PETScWrappers::PreconditionBoomerAMG::AdditionalData());
@@ -419,7 +420,89 @@ namespace coanda
 
 
 
-// ------------------------------------ NS CLASS ----------------------------------- //
+// --------------------- BLOCK SCHUR PRECONDITIONER ---------------------
+
+  class BlockSchurPreconditioner : public Subscriptor
+  {
+    public:
+    BlockSchurPreconditioner(
+    TimerOutput &timer,
+    double gamma,
+    double viscosity,
+    const PETScWrappers::MPI::BlockSparseMatrix &jacobian_matrix,
+    PETScWrappers::MPI::SparseMatrix &pressure_mass_matrix);
+  
+    void vmult(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const;
+  
+    private:
+    TimerOutput &timer;
+    const double gamma;
+    const double viscosity;
+  
+    const SmartPointer<const PETScWrappers::MPI::BlockSparseMatrix> jacobian_matrix;
+    const SmartPointer<PETScWrappers::MPI::SparseMatrix> pressure_mass_matrix;
+  };
+  
+
+
+// -------------------- BLOCK SCHUR PRECONDITIONER CONSTRUCTOR --------------------
+
+  BlockSchurPreconditioner::BlockSchurPreconditioner(TimerOutput &timer,
+                                                    double gamma,
+                                                    double viscosity,
+                                                    const PETScWrappers::MPI::BlockSparseMatrix &jacobian_matrix,
+                                                    PETScWrappers::MPI::SparseMatrix &pressure_mass_matrix)
+    : timer(timer),
+      gamma(gamma),
+      viscosity(viscosity),
+      jacobian_matrix(&jacobian_matrix),
+      pressure_mass_matrix(&pressure_mass_matrix)
+  {}
+
+
+
+// -------------------- BLOCK SCHUR PRECONDITIONER VMULT --------------------
+
+  void BlockSchurPreconditioner::vmult(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const
+  {
+    PETScWrappers::MPI::Vector utmp(src.block(0));
+    utmp = 0;
+
+    {
+      TimerOutput::Scope timer_section(timer, "CG for Mp");
+
+      SolverControl mp_control(src.block(1).size(), 1e-3 * src.block(1).l2_norm());
+      PETScWrappers::SolverCG solver(mp_control, pressure_mass_matrix->get_mpi_communicator());
+
+      PETScWrappers::PreconditionBlockJacobi Mp_preconditioner;
+      Mp_preconditioner.initialize(*pressure_mass_matrix);
+
+      dst.block(1) = 0.0;
+      solver.solve((*pressure_mass_matrix), dst.block(1), src.block(1), Mp_preconditioner);
+      dst.block(1) *= -(viscosity + gamma);
+    }
+
+    {
+      TimerOutput::Scope timer_section(timer, "CG for A");
+      
+      jacobian_matrix->block(0, 1).vmult(utmp, dst.block(1));
+      utmp *= -1.0;
+      utmp += src.block(0);
+
+      SolverControl A_control(/* src.block(0).size() */ 50000, 1e-3 * utmp.l2_norm());
+      PETScWrappers::SolverCG solver(A_control, (jacobian_matrix->block(0,0)).get_mpi_communicator());
+
+      PETScWrappers::PreconditionBlockJacobi A_preconditioner;
+      A_preconditioner.initialize(jacobian_matrix->block(0,0));
+      //PETScWrappers::PreconditionBoomerAMG A_preconditioner(jacobian_matrix->block(0,0), PETScWrappers::PreconditionBoomerAMG::AdditionalData{});
+      
+      solver.solve(jacobian_matrix->block(0,0), dst.block(0), utmp, A_preconditioner);
+    }
+  }
+
+
+
+// ------------------------------------ NS CLASS -----------------------------------
 
   template <int dim>
   class NS
@@ -433,6 +516,7 @@ namespace coanda
       const double stopping_criterion,
       const unsigned int n_glob_ref,
       const unsigned int jacobian_update_step,
+      const double gamma,
       const double viscosity,
       const double viscosity_begin_continuation=0, // not necessary to pass this if continuation is not used
       const double continuation_step_size=0); // same
@@ -453,7 +537,7 @@ namespace coanda
     void assemble_system(const bool first_iteration, const bool steady_system=false);
     void assemble_rhs(const bool first_iteration, const bool steady_system=false);
 
-    void solve(const bool first_iteration);
+    void solve(const bool first_iteration, const bool steady_system=false);
 
     void refine_mesh(const unsigned int min_grid_level, const unsigned int max_grid_level);
 
@@ -477,6 +561,7 @@ namespace coanda
     const double stopping_criterion; // same
     const unsigned int n_glob_ref;
     const unsigned int jacobian_update_step;
+    const double gamma;
     double viscosity;
     const double viscosity_begin_continuation;
     const double continuation_step_size;
@@ -494,6 +579,7 @@ namespace coanda
     BlockSparsityPattern sparsity_pattern;
 
     PETScWrappers::MPI::BlockSparseMatrix jacobian_matrix;
+    PETScWrappers::MPI::SparseMatrix pressure_mass_matrix;
 
     PETScWrappers::MPI::BlockVector present_solution;
     PETScWrappers::MPI::BlockVector old_solution;
@@ -514,6 +600,7 @@ namespace coanda
     mutable TimerOutput timer;
 
     std::shared_ptr<SIMPLE> preconditioner;
+    std::shared_ptr<BlockSchurPreconditioner> steady_preconditioner;
 
     std::vector<double> relative_distances;
     std::vector<double> residuals_at_first_iteration;
@@ -532,6 +619,7 @@ namespace coanda
               const double stopping_criterion,
               const unsigned int n_glob_ref,
               const unsigned int jacobian_update_step,
+              const double gamma,
               const double viscosity,
               const double viscosity_begin_continuation,
               const double continuation_step_size
@@ -545,6 +633,7 @@ namespace coanda
       stopping_criterion(stopping_criterion),
       n_glob_ref(n_glob_ref),
       jacobian_update_step(jacobian_update_step),
+      gamma(gamma),
       viscosity(viscosity),
       viscosity_begin_continuation(viscosity_begin_continuation),
       continuation_step_size(continuation_step_size),
@@ -717,7 +806,9 @@ namespace coanda
   void NS<dim>::setup_system()
   {
     preconditioner.reset();
+    steady_preconditioner.reset();
     jacobian_matrix.clear();
+    pressure_mass_matrix.clear();
 
     BlockDynamicSparsityPattern dsp(relevant_partitioning);
     DoFTools::make_sparsity_pattern(dof_handler, dsp, nonzero_constraints);
@@ -730,6 +821,8 @@ namespace coanda
                                               );
       
     jacobian_matrix.reinit(owned_partitioning, dsp, mpi_communicator);
+    pressure_mass_matrix.reinit(owned_partitioning[1], dsp.block(1, 1), mpi_communicator);
+    //pressure_mass_matrix.reinit(owned_partitioning, dsp, mpi_communicator);
 
     present_solution.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
     old_solution.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
@@ -748,9 +841,13 @@ namespace coanda
   {
     TimerOutput::Scope timer_section(timer, "Assemble system");
     
-    if (assemble_jacobian) { jacobian_matrix = 0; }
+    if (assemble_jacobian)
+    {
+      jacobian_matrix = 0.0;
+      //pressure_mass_matrix = 0.0;  
+    }
 
-    system_rhs = 0;
+    system_rhs = 0.0;
 
     FEValues<dim> fe_values(fe, quad_formula, update_values | update_quadrature_points | update_JxW_values | update_gradients);
     
@@ -761,6 +858,7 @@ namespace coanda
     const FEValuesExtractors::Scalar pressure(dim);
 
     FullMatrix<double> local_matrix(dofs_per_cell, dofs_per_cell);
+    //FullMatrix<double> local_mass_matrix(dofs_per_cell, dofs_per_cell);
     Vector<double> local_rhs(dofs_per_cell);
 
     std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
@@ -791,10 +889,7 @@ namespace coanda
       {
         fe_values.reinit(cell);
 
-        if (assemble_jacobian)
-        {
-          local_matrix = 0;
-        }
+        if (assemble_jacobian) { local_matrix = 0; }
 
         local_rhs = 0;
 
@@ -844,7 +939,11 @@ namespace coanda
                   local_matrix(i, j) += ((theta*quantity1 + quantity2)*fe_values.JxW(q)); // fully implicit in the terms involving B
                 }
 
-                else { local_matrix(i, j) += (quantity1 + quantity2)*fe_values.JxW(q); }
+                else
+                {
+                  local_matrix(i, j) += (quantity1 + quantity2 + gamma * div_phi_u[i] * div_phi_u[j])*fe_values.JxW(q);
+                  local_matrix(i, j) += (/*phi_u[i] * phi_u[j]*/ + phi_p[i] * phi_p[j]) * fe_values.JxW(q); // local mass matrix actually
+                }
               }
             }
 
@@ -881,6 +980,7 @@ namespace coanda
                         - phi_u[i] * (present_velocity_gradients[q] * present_velocity_values[q])
                         + div_phi_u[i] * present_pressure_values[q]
                         + phi_p[i] * present_velocity_divergence
+                        - gamma * div_phi_u[i] * present_velocity_divergence
                         ) * fe_values.JxW(q);
             }
           }
@@ -894,22 +994,31 @@ namespace coanda
         if (assemble_jacobian)
         {
           constraints_used.distribute_local_to_global(local_matrix, local_rhs, local_dof_indices, jacobian_matrix, system_rhs);
+          /*
+          if (steady_system)
+          {
+            constraints_used.distribute_local_to_global(local_mass_matrix, local_dof_indices, pressure_mass_matrix);
+          }
+          */
         }
 
-        else
-        {
-          constraints_used.distribute_local_to_global(local_rhs, local_dof_indices, system_rhs);
-        }
+        else { constraints_used.distribute_local_to_global(local_rhs, local_dof_indices, system_rhs); }
       }
-     
-      if (assemble_jacobian)
-      {
-        jacobian_matrix.compress(VectorOperation::add);
-        //jacobian_matrix.block(1, 1) = 0;
-      }
-
-      system_rhs.compress(VectorOperation::add);
     }
+
+    if (assemble_jacobian)
+    {
+      jacobian_matrix.compress(VectorOperation::add);
+
+      if (steady_system)
+      {
+        //pressure_mass_matrix.compress(VectorOperation::add);  
+        pressure_mass_matrix.copy_from(jacobian_matrix.block(1, 1));
+        jacobian_matrix.block(1, 1) = 0;
+      } 
+    }
+    
+    system_rhs.compress(VectorOperation::add);
   }
 
 
@@ -939,22 +1048,34 @@ namespace coanda
 // -------------------- SOLVE --------------------
 
   template <int dim>
-  void NS<dim>::solve(const bool first_iteration)
+  void NS<dim>::solve(const bool first_iteration, const bool steady_system)
   {
     const AffineConstraints<double> &constraints_used = first_iteration ? nonzero_constraints : zero_constraints;
- 
-    preconditioner.reset(new SIMPLE(mpi_communicator, timer, owned_partitioning, relevant_partitioning, jacobian_matrix));
 
-    preconditioner -> assemble();
-
-    SolverControl solver_control(/* jacobian_matrix.m() */ 50000, 1e-5 * system_rhs.l2_norm(), true);
-    
+    SolverControl solver_control(/* jacobian_matrix.m() */ 50000, 1e-6 * system_rhs.l2_norm(), true);
     GrowingVectorMemory<PETScWrappers::MPI::BlockVector> vector_memory;
     SolverFGMRES<PETScWrappers::MPI::BlockVector> gmres(solver_control, vector_memory);
 
-    gmres.solve(jacobian_matrix, newton_update, system_rhs, *preconditioner);
+    if (!steady_system)
+    {
+      preconditioner.reset(new SIMPLE(mpi_communicator, timer, owned_partitioning, relevant_partitioning, jacobian_matrix));
+      preconditioner -> assemble();
+      gmres.solve(jacobian_matrix, newton_update, system_rhs, *preconditioner);
+    }
+
+    else
+    {
+      steady_preconditioner.reset(new BlockSchurPreconditioner(timer,
+                                                      gamma,
+                                                      viscosity,
+                                                      jacobian_matrix,
+                                                      pressure_mass_matrix
+                                                      )
+                                  );
+      gmres.solve(jacobian_matrix, newton_update, system_rhs, *steady_preconditioner);
+    }
+
     pcout << "  FGMRES steps: " << solver_control.last_step() << std::endl;
- 
     constraints_used.distribute(newton_update);
   }
  
@@ -986,7 +1107,7 @@ namespace coanda
         evaluation_points = dst;
 
         assemble_system(first_iteration, steady_system);
-        solve(first_iteration);
+        solve(first_iteration, steady_system);
 
         PETScWrappers::MPI::BlockVector tmp;
         tmp.reinit(owned_partitioning, mpi_communicator);
@@ -1039,7 +1160,7 @@ namespace coanda
         if (line_search_n % jacobian_update_step == 0 || line_search_n < 3) { assemble_system(first_iteration, steady_system); }
         else { assemble_rhs(first_iteration, steady_system); }
         
-        solve(first_iteration);
+        solve(first_iteration, steady_system);
  
         for (double alpha = 1.0; alpha > 1e-5; alpha *= 0.5)
         {
@@ -1098,8 +1219,7 @@ namespace coanda
     data_out.attach_dof_handler(dof_handler);
 
     // vector to be output must be ghosted
-    if (!output_steady_solution)
-    { data_out.add_data_vector(present_solution, solution_names, DataOut<dim>::type_dof_data, data_component_interpretation); }
+    if (!output_steady_solution) { data_out.add_data_vector(present_solution, solution_names, DataOut<dim>::type_dof_data, data_component_interpretation); }
 
     else
     {
@@ -1326,6 +1446,7 @@ int main(int argc, char *argv[])
     const double stopping_criterion{1e-10};
     const unsigned int n_glob_ref{1};
     const unsigned int jacobian_update_step{4};
+    const double gamma{1.0};
     const double viscosity{0.7};
     const double viscosity_begin_continuation{0.72};
     const double continuation_step_size{1e-2};
@@ -1338,6 +1459,7 @@ int main(int argc, char *argv[])
                     stopping_criterion,
                     n_glob_ref,
                     jacobian_update_step,
+                    gamma,
                     viscosity,
                     viscosity_begin_continuation,
                     continuation_step_size};

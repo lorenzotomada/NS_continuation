@@ -81,6 +81,7 @@
 #include <deal.II/distributed/tria.h>
 
 
+#include <vector>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -92,6 +93,30 @@
 namespace coanda
 {
   using namespace dealii;
+
+
+
+// -------------------- SAVE VECTORS FOR VISUALIZATION USING NUMPY --------------------
+
+  void save_vector(const std::vector<double>& vec, const std::string& filename)
+  {
+    try
+    {
+      std::ofstream out(filename);
+
+      if (!out) 
+        throw std::ios_base::failure("Error opening file for writing.");
+    
+      for (size_t i = 0; i < vec.size(); ++i)
+      {
+        out << vec[i];
+        if (i != vec.size() - 1) out << ",";
+      }
+      out.close();
+    }
+
+    catch (const std::exception& e) { std::cerr << "It was not possible to save the vector to a file named " << filename << ". Error: " << e.what() << std::endl; }
+  }
 
 
 
@@ -165,7 +190,7 @@ namespace coanda
     BoundaryValues() : Function<dim>(dim + 1) {}
 
     virtual double value(const Point<dim> &p, const unsigned int component) const override;
-    virtual void vector_value(const Point<dim> &p, Vector<double> &values) const override;
+    //virtual void vector_value(const Point<dim> &p, Vector<double> &values) const override;
   };
 
 
@@ -198,7 +223,7 @@ namespace coanda
   }
 
 
-
+/*
 // -------------------- BOUNDARY VALUES VECTOR VALUE --------------------
 
   template <int dim>
@@ -206,7 +231,7 @@ namespace coanda
   {
     for (unsigned int c = 0; c < this->n_components; ++c) { values(c) = BoundaryValues<dim>::value(p, c); }
   }
-
+*/
 
 
 // -------------------- SCHUR COMPLEMENT SPARSITY --------------------
@@ -737,6 +762,11 @@ namespace coanda
   template <int dim>
   void NS<dim>::setup_dofs()
   {
+    preconditioner.reset();
+    steady_preconditioner.reset();
+    jacobian_matrix.clear();
+    pressure_mass_matrix.clear();
+
     dof_handler.distribute_dofs(fe);
 
     std::vector<unsigned int> block_component(dim + 1, 0);
@@ -755,6 +785,7 @@ namespace coanda
     relevant_partitioning.resize(2);
     relevant_partitioning[0] = locally_relevant_dofs.get_view(0, dof_u);
     relevant_partitioning[1] = locally_relevant_dofs.get_view(dof_u, dof_u + dof_p);
+    
     pcout << "   Number of active fluid cells: " << triangulation.n_global_active_cells() << std::endl << "   Number of degrees of freedom: " << dof_handler.n_dofs() << " (" << dof_u << '+' << dof_p << ')' << std::endl;
 
     const FEValuesExtractors::Vector velocities(0);
@@ -765,9 +796,6 @@ namespace coanda
 
       nonzero_constraints.reinit(locally_relevant_dofs);
       zero_constraints.reinit(locally_relevant_dofs);
-
-      DoFTools::make_hanging_node_constraints(dof_handler, nonzero_constraints);
-      DoFTools::make_hanging_node_constraints(dof_handler, zero_constraints);
 
       // Apply Dirichlet boundary conditions on all Dirichlet boundaries except for the outlet.
       std::vector<unsigned int> dirichlet_bc_ids;
@@ -789,6 +817,9 @@ namespace coanda
                                                 );
       }
 
+      DoFTools::make_hanging_node_constraints(dof_handler, nonzero_constraints);
+      //DoFTools::make_hanging_node_constraints(dof_handler, zero_constraints);
+
       nonzero_constraints.close();
       zero_constraints.close();
     }
@@ -801,11 +832,6 @@ namespace coanda
   template <int dim>
   void NS<dim>::setup_system()
   {
-    preconditioner.reset();
-    steady_preconditioner.reset();
-    jacobian_matrix.clear();
-    pressure_mass_matrix.clear();
-
     BlockDynamicSparsityPattern dsp(relevant_partitioning);
     DoFTools::make_sparsity_pattern(dof_handler, dsp, nonzero_constraints);
     sparsity_pattern.copy_from(dsp);
@@ -861,7 +887,7 @@ namespace coanda
     std::vector<Tensor<1, dim>> old_velocity_values(n_q_points);
     std::vector<Tensor<2, dim>> old_velocity_gradients(n_q_points);
 
-    std::vector<Tensor<1, dim>> tmp(n_q_points); // present velocity - old solution velocity
+    std::vector<Tensor<1, dim>> tmp(n_q_points); // old solution velocity - present velocity
 
     std::vector<double> present_velocity_divergences(n_q_points);
     std::vector<double> present_pressure_values(n_q_points);
@@ -898,7 +924,8 @@ namespace coanda
 
         fe_values[velocities].get_function_values(old_solution, tmp);
 
-        for (size_t i = 0; i < tmp.size(); ++i) { tmp[i] -= present_velocity_values[i]; }
+        for (size_t i = 0; i < tmp.size(); ++i) 
+          tmp[i] -= present_velocity_values[i];
 
         for (unsigned int q = 0; q < n_q_points; ++q)
         {
@@ -916,26 +943,22 @@ namespace coanda
             {
               for (unsigned int j = 0; j < dofs_per_cell; ++j)
               {
-                const double quantity1 = viscosity * scalar_product(grad_phi_u[i], grad_phi_u[j])   //   a(u, v) ---> mu*grad(u)*grad(v)  
-                      + phi_u[i] * (present_velocity_gradients[q] * phi_u[j])                       //   Linearization of the convective term (pt. 1) 
-                      + phi_u[i] * (present_velocity_values[q] * grad_phi_u[j]);                    //   Linearization of the convective term (pt. 2) 
+                const double quantity1 = viscosity * scalar_product(grad_phi_u[i], grad_phi_u[j])    //   a(u, v) ---> mu*grad(u)*grad(v)  
+                      + phi_u[i] * (present_velocity_gradients[q] * phi_u[j])                        //   Linearization of the convective term (pt. 1) 
+                      + phi_u[i] * (present_velocity_values[q] * grad_phi_u[j]);                     //   Linearization of the convective term (pt. 2) 
                 
-                const double quantity2 = - div_phi_u[i] * phi_p[j]                                  //   b(v, p) = -p*div(v)   
-                      - phi_p[i] * div_phi_u[j];                                                    //   b(u, q) = -q*div(u)  
+                const double quantity2 = - div_phi_u[i] * phi_p[j]                                   //   b(v, p) = -p*div(v)   
+                      - phi_p[i] * div_phi_u[j];                                                     //   b(u, q) = -q*div(u)  
 
                 if (!steady_system)
                 {
-                  const double mass_matrix_contribution = ((phi_u[i] * phi_u[j]) / time.get_delta_t())
-                                                   * fe_values.JxW(q);                              //   From time stepping, 1/dt*M
+                  const double mass_matrix_contribution = (phi_u[i] * phi_u[j]) / time.get_delta_t(); //   From time stepping, 1/dt*M
 
-                  local_matrix(i, j) += mass_matrix_contribution;
-                  local_matrix(i, j) += ((theta*quantity1 + quantity2)*fe_values.JxW(q));           // fully implicit in the terms involving B
+                  local_matrix(i, j) += (theta*quantity1 + quantity2 + mass_matrix_contribution)*fe_values.JxW(q);           // fully implicit in the terms involving B
                 }
 
                 else
-                {
-                  local_matrix(i, j) += (quantity1 + quantity2 + gamma * div_phi_u[i] * div_phi_u[j]  + phi_p[i] * phi_p[j])*fe_values.JxW(q);
-                }
+                  local_matrix(i, j) += (quantity1 + quantity2 + gamma*div_phi_u[i]*div_phi_u[j]  + phi_p[i]*phi_p[j])*fe_values.JxW(q);
               }
             }
 
@@ -985,8 +1008,9 @@ namespace coanda
 
         if (assemble_jacobian)
           constraints_used.distribute_local_to_global(local_matrix, local_rhs, local_dof_indices, jacobian_matrix, system_rhs);
+        else
+          constraints_used.distribute_local_to_global(local_rhs, local_dof_indices, system_rhs);
 
-        else { constraints_used.distribute_local_to_global(local_rhs, local_dof_indices, system_rhs); }
       }
     }
 
@@ -1014,18 +1038,10 @@ namespace coanda
   {
     const bool assemble_jacobian{true};
     assemble(first_iteration, assemble_jacobian, steady_system);
+    pcout << "Frobenius norm of the Jacobian: " << jacobian_matrix.frobenius_norm() << std::endl;
 
     if (steady_system)
-    {
-      steady_preconditioner.reset(new BlockSchurPreconditioner(timer,
-                                                      gamma,
-                                                      viscosity,
-                                                      jacobian_matrix,
-                                                      pressure_mass_matrix
-                                                      )
-                                  );
-    }
-
+      steady_preconditioner.reset(new BlockSchurPreconditioner(timer, gamma, viscosity, jacobian_matrix, pressure_mass_matrix));
     else
     {
       preconditioner.reset(new SIMPLE(mpi_communicator, timer, owned_partitioning, relevant_partitioning, jacobian_matrix));
@@ -1060,7 +1076,6 @@ namespace coanda
 
     if (!steady_system)
       gmres.solve(jacobian_matrix, newton_update, system_rhs, *preconditioner);
-
     else
       gmres.solve(jacobian_matrix, newton_update, system_rhs, *steady_preconditioner);
 
@@ -1093,7 +1108,7 @@ namespace coanda
         setup_dofs();
         setup_system();
 
-        evaluation_points = dst;
+        evaluation_points = 0; //dst
 
         assemble_system(first_iteration, steady_system);
         solve(first_iteration, steady_system);
@@ -1104,7 +1119,7 @@ namespace coanda
         nonzero_constraints.distribute(tmp);
 
         dst = tmp;
-        // try to write  present_solution = newton_update;
+        // try to write dst = newton_update;
 
         first_iteration = false;
         evaluation_points = dst;
@@ -1143,14 +1158,18 @@ namespace coanda
           evaluation_points += tmp_initial_guess; // alpha*old solution + (1-alpha)*initial_guess
         }
 
-        else { evaluation_points = dst; }
+        else 
+        {
+          evaluation_points.reinit(owned_partitioning, mpi_communicator);
+          evaluation_points = dst;
+        }
 
         // We do not update the Jacobian at each iteration to reduce the cost
         if (line_search_n % jacobian_update_step == 0 || line_search_n < 3)
           assemble_system(first_iteration, steady_system);
         else
           assemble_rhs(first_iteration, steady_system);
-        
+
         solve(first_iteration, steady_system);
  
         for (double alpha = 1.0; alpha > 1e-5; alpha *= 0.5)
@@ -1295,7 +1314,6 @@ namespace coanda
 
     // Reinitialize the system
     setup_dofs();
-    setup_system();
 
     // Transfer solution
     // Need a non-ghosted vector for interpolation
@@ -1310,6 +1328,9 @@ namespace coanda
       trans2.interpolate(tmp);
       steady_solution = tmp;
     }
+
+    setup_system();
+
   }
 
 
@@ -1424,6 +1445,11 @@ namespace coanda
           refine_mesh(0, 2);
       }
     }
+
+    const std::string filename1{"residual_first_iteration.csv"};
+    const std::string filename2{"relative_distances.csv"};
+    save_vector(residuals_at_first_iteration, filename1);
+    save_vector(relative_distances, filename2);
   }
 }
 

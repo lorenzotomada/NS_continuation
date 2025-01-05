@@ -469,9 +469,10 @@ namespace coanda
     utmp = 0;
 
     {
+      //jacobian_matrix->block(0,0).print(std::cout); // useful for debugging
       TimerOutput::Scope timer_section(timer, "CG for Mp");
 
-      SolverControl mp_control(src.block(1).size(), 1e-3 * src.block(1).l2_norm());
+      SolverControl mp_control(src.block(1).size(), 1e-6 * src.block(1).l2_norm());
       PETScWrappers::SolverCG solver(mp_control, pressure_mass_matrix->get_mpi_communicator());
 
       PETScWrappers::PreconditionBlockJacobi Mp_preconditioner;
@@ -483,20 +484,20 @@ namespace coanda
     }
 
     {
-      TimerOutput::Scope timer_section(timer, "CG for A");
+      TimerOutput::Scope timer_section(timer, "MUMPS for A");
       
       jacobian_matrix->block(0, 1).vmult(utmp, dst.block(1));
       utmp *= -1.0;
       utmp += src.block(0);
 
-      SolverControl A_control(/* src.block(0).size() */ 50000, 1e-3 * utmp.l2_norm());
-      PETScWrappers::SolverCG solver(A_control, (jacobian_matrix->block(0,0)).get_mpi_communicator());
+      SolverControl A_control(/* src.block(0).size() */ 50000, 1e-6 * utmp.l2_norm());
+      PETScWrappers::SparseDirectMUMPS solver(A_control, (jacobian_matrix->block(0,0)).get_mpi_communicator());
 
-      PETScWrappers::PreconditionBlockJacobi A_preconditioner;
+      PETScWrappers::PreconditionSOR A_preconditioner;
       A_preconditioner.initialize(jacobian_matrix->block(0,0));
       //PETScWrappers::PreconditionBoomerAMG A_preconditioner(jacobian_matrix->block(0,0), PETScWrappers::PreconditionBoomerAMG::AdditionalData{});
-      
-      solver.solve(jacobian_matrix->block(0,0), dst.block(0), utmp, A_preconditioner);
+      //solver.solve(jacobian_matrix->block(0,0), dst.block(0), utmp, A_preconditioner);
+      solver.solve(jacobian_matrix->block(0,0), dst.block(0), utmp);
     }
   }
 
@@ -1177,16 +1178,15 @@ namespace coanda
           assemble_rhs(first_iteration, steady_system); // we assemble taking into account the boundary conditions
 
           current_res = system_rhs.l2_norm();
-          std::cout << "    alpha: " << std::setw(10) << alpha << std::setw(0) << "  residual: " << current_res << std::endl;
-          if (current_res < last_res)
-          {
-            dst = evaluation_points;
-            break;
-          }
+          pcout << "    alpha: " << std::setw(10) << alpha << std::setw(0) << "  residual: " << current_res << std::endl;
+
+          if (current_res < last_res) { break; }
         }
+
+        dst = evaluation_points;
                 
         {
-          std::cout << "  number of line searches: " << line_search_n << "  residual: " << current_res << std::endl;
+          pcout << "  number of line searches: " << line_search_n << "  residual: " << current_res << std::endl;
           last_res = current_res;
           residuals_at_first_iteration.push_back(last_res);
         }
@@ -1336,6 +1336,7 @@ namespace coanda
       newton_iteration(steady_solution, 1e-7, 50, is_initial_step, steady_system);
       
       is_initial_step = false;
+
       if (mu==target_viscosity) { break; }
     }
 
@@ -1354,12 +1355,14 @@ namespace coanda
     setup_dofs();
     setup_system();
 
+    
     PETScWrappers::MPI::BlockVector tmp;
     tmp.reinit(owned_partitioning, mpi_communicator);
 
     nonzero_constraints.distribute(tmp);
 
     old_solution = tmp;
+    
 
     // Time loop.
 
@@ -1440,7 +1443,7 @@ int main(int argc, char *argv[])
     
     const double theta{0.5}; // using the trapezoidal rule to integrate in time
     const bool adaptive_refinement{true};
-    const bool use_continuation{false};
+    const bool use_continuation{true};
     const bool distort_mesh{false};
     const unsigned int fe_degree{1};
     const double stopping_criterion{1e-10};

@@ -220,18 +220,14 @@ namespace coanda
     for (const auto &row : tmp_mat.locally_owned_range_indices())
     {
       for (auto entry = tmp_mat.begin(row); entry != tmp_mat.end(row); ++entry)
-      {
         dst.add(entry->row(), entry->column());
-      }
     }
 
     // Add entries for the (1, 1) block.
     for (const auto &row : src.block(1, 1).locally_owned_range_indices())
     {
       for (auto entry = src.block(1, 1).begin(row); entry != src.block(1, 1).end(row); ++entry)
-      {
         dst.add(entry->row(), entry->column());
-      }
     }
   }
 
@@ -247,8 +243,6 @@ namespace coanda
     dst.add(1.0, tmp_mat);
     dst.add(-1.0, src.block(1, 1));
   }
-
-
 
 
 
@@ -415,7 +409,8 @@ namespace coanda
     dst.block(0).scale(diag_F_inv); // d0 = D^{-1} * d0
     dst.block(0).sadd(-1.0, src.block(0)); // d0 = s0 - d0
 
-    if (src.n_blocks() == 3) { dst.block(2) = src.block(2); }
+    if (src.n_blocks() == 3) 
+      dst.block(2) = src.block(2);
   }
 
 
@@ -490,10 +485,10 @@ namespace coanda
       utmp *= -1.0;
       utmp += src.block(0);
 
-      SolverControl A_control(/* src.block(0).size() */ 50000, 1e-6 * utmp.l2_norm());
+      SolverControl A_control(src.block(0).size(), 1e-6 * utmp.l2_norm());
       PETScWrappers::SparseDirectMUMPS solver(A_control, (jacobian_matrix->block(0,0)).get_mpi_communicator());
 
-      PETScWrappers::PreconditionSOR A_preconditioner;
+      PETScWrappers::PreconditionILU A_preconditioner;
       A_preconditioner.initialize(jacobian_matrix->block(0,0));
       //PETScWrappers::PreconditionBoomerAMG A_preconditioner(jacobian_matrix->block(0,0), PETScWrappers::PreconditionBoomerAMG::AdditionalData{});
       //solver.solve(jacobian_matrix->block(0,0), dst.block(0), utmp, A_preconditioner);
@@ -842,11 +837,8 @@ namespace coanda
   {
     TimerOutput::Scope timer_section(timer, "Assemble system");
     
-    if (assemble_jacobian)
-    {
+    if (assemble_jacobian) 
       jacobian_matrix = 0.0;
-      //pressure_mass_matrix = 0.0;  
-    }
 
     system_rhs = 0.0;
 
@@ -859,7 +851,6 @@ namespace coanda
     const FEValuesExtractors::Scalar pressure(dim);
 
     FullMatrix<double> local_matrix(dofs_per_cell, dofs_per_cell);
-    //FullMatrix<double> local_mass_matrix(dofs_per_cell, dofs_per_cell);
     Vector<double> local_rhs(dofs_per_cell);
 
     std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
@@ -890,7 +881,8 @@ namespace coanda
       {
         fe_values.reinit(cell);
 
-        if (assemble_jacobian) { local_matrix = 0; }
+        if (assemble_jacobian)
+          local_matrix = 0;
 
         local_rhs = 0;
 
@@ -937,13 +929,12 @@ namespace coanda
                                                    * fe_values.JxW(q);                              //   From time stepping, 1/dt*M
 
                   local_matrix(i, j) += mass_matrix_contribution;
-                  local_matrix(i, j) += ((theta*quantity1 + quantity2)*fe_values.JxW(q)); // fully implicit in the terms involving B
+                  local_matrix(i, j) += ((theta*quantity1 + quantity2)*fe_values.JxW(q));           // fully implicit in the terms involving B
                 }
 
                 else
                 {
-                  local_matrix(i, j) += (quantity1 + quantity2 + gamma * div_phi_u[i] * div_phi_u[j])*fe_values.JxW(q);
-                  local_matrix(i, j) += (/*phi_u[i] * phi_u[j]*/ + phi_p[i] * phi_p[j]) * fe_values.JxW(q); // local mass matrix actually
+                  local_matrix(i, j) += (quantity1 + quantity2 + gamma * div_phi_u[i] * div_phi_u[j]  + phi_p[i] * phi_p[j])*fe_values.JxW(q);
                 }
               }
             }
@@ -993,15 +984,7 @@ namespace coanda
         const AffineConstraints<double> &constraints_used = first_iteration ? nonzero_constraints : zero_constraints;
 
         if (assemble_jacobian)
-        {
           constraints_used.distribute_local_to_global(local_matrix, local_rhs, local_dof_indices, jacobian_matrix, system_rhs);
-          /*
-          if (steady_system)
-          {
-            constraints_used.distribute_local_to_global(local_mass_matrix, local_dof_indices, pressure_mass_matrix);
-          }
-          */
-        }
 
         else { constraints_used.distribute_local_to_global(local_rhs, local_dof_indices, system_rhs); }
       }
@@ -1012,9 +995,9 @@ namespace coanda
       jacobian_matrix.compress(VectorOperation::add);
 
       if (steady_system)
-      {
-        //pressure_mass_matrix.compress(VectorOperation::add);  
+      { 
         pressure_mass_matrix.copy_from(jacobian_matrix.block(1, 1));
+        pressure_mass_matrix.compress(VectorOperation::add); 
         jacobian_matrix.block(1, 1) = 0;
       } 
     }
@@ -1031,6 +1014,24 @@ namespace coanda
   {
     const bool assemble_jacobian{true};
     assemble(first_iteration, assemble_jacobian, steady_system);
+
+    if (steady_system)
+    {
+      steady_preconditioner.reset(new BlockSchurPreconditioner(timer,
+                                                      gamma,
+                                                      viscosity,
+                                                      jacobian_matrix,
+                                                      pressure_mass_matrix
+                                                      )
+                                  );
+    }
+
+    else
+    {
+      preconditioner.reset(new SIMPLE(mpi_communicator, timer, owned_partitioning, relevant_partitioning, jacobian_matrix));
+      preconditioner -> assemble();
+    }
+
   }
  
 
@@ -1053,28 +1054,15 @@ namespace coanda
   {
     const AffineConstraints<double> &constraints_used = first_iteration ? nonzero_constraints : zero_constraints;
 
-    SolverControl solver_control(/* jacobian_matrix.m() */ 50000, 1e-6 * system_rhs.l2_norm(), true);
+    SolverControl solver_control(jacobian_matrix.m(), 1e-4 * system_rhs.l2_norm(), true);
     GrowingVectorMemory<PETScWrappers::MPI::BlockVector> vector_memory;
     SolverFGMRES<PETScWrappers::MPI::BlockVector> gmres(solver_control, vector_memory);
 
     if (!steady_system)
-    {
-      preconditioner.reset(new SIMPLE(mpi_communicator, timer, owned_partitioning, relevant_partitioning, jacobian_matrix));
-      preconditioner -> assemble();
       gmres.solve(jacobian_matrix, newton_update, system_rhs, *preconditioner);
-    }
 
     else
-    {
-      steady_preconditioner.reset(new BlockSchurPreconditioner(timer,
-                                                      gamma,
-                                                      viscosity,
-                                                      jacobian_matrix,
-                                                      pressure_mass_matrix
-                                                      )
-                                  );
       gmres.solve(jacobian_matrix, newton_update, system_rhs, *steady_preconditioner);
-    }
 
     pcout << "  FGMRES steps: " << solver_control.last_step() << std::endl;
     constraints_used.distribute(newton_update);
@@ -1158,8 +1146,10 @@ namespace coanda
         else { evaluation_points = dst; }
 
         // We do not update the Jacobian at each iteration to reduce the cost
-        if (line_search_n % jacobian_update_step == 0 || line_search_n < 3) { assemble_system(first_iteration, steady_system); }
-        else { assemble_rhs(first_iteration, steady_system); }
+        if (line_search_n % jacobian_update_step == 0 || line_search_n < 3)
+          assemble_system(first_iteration, steady_system);
+        else
+          assemble_rhs(first_iteration, steady_system);
         
         solve(first_iteration, steady_system);
  
@@ -1180,7 +1170,8 @@ namespace coanda
           current_res = system_rhs.l2_norm();
           pcout << "    alpha: " << std::setw(10) << alpha << std::setw(0) << "  residual: " << current_res << std::endl;
 
-          if (current_res < last_res) { break; }
+          if (current_res < last_res)
+            break;
         }
 
         dst = evaluation_points;
@@ -1219,7 +1210,8 @@ namespace coanda
     data_out.attach_dof_handler(dof_handler);
 
     // vector to be output must be ghosted
-    if (!output_steady_solution) { data_out.add_data_vector(present_solution, solution_names, DataOut<dim>::type_dof_data, data_component_interpretation); }
+    if (!output_steady_solution) 
+      data_out.add_data_vector(present_solution, solution_names, DataOut<dim>::type_dof_data, data_component_interpretation);
 
     else
     {
@@ -1232,14 +1224,18 @@ namespace coanda
     // Partition
     Vector<float> subdomain(triangulation.n_active_cells());
     
-    for (unsigned int i = 0; i < subdomain.size(); ++i) { subdomain(i) = triangulation.locally_owned_subdomain(); }
+    for (unsigned int i = 0; i < subdomain.size(); ++i) 
+      subdomain(i) = triangulation.locally_owned_subdomain();
     
     data_out.add_data_vector(subdomain, "subdomain");
     data_out.build_patches(fe_degree + 1);
 
     std::string basename;
-    if (!output_steady_solution) { basename = "navierstokes" + Utilities::int_to_string(output_index, 6) + "-"; }
-    else { basename = "steady_solution"; }
+
+    if (!output_steady_solution)
+      basename = "navierstokes" + Utilities::int_to_string(output_index, 6) + "-";
+    else 
+      basename = "steady_solution";
 
     std::string filename = basename + Utilities::int_to_string(triangulation.locally_owned_subdomain(), 4) + ".vtu";
 
@@ -1251,9 +1247,8 @@ namespace coanda
     if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
     {
       for (unsigned int i = 0; i < Utilities::MPI::n_mpi_processes(mpi_communicator); ++i)
-      {
         times_and_names.push_back({time.current(), basename + Utilities::int_to_string(i, 4) + ".vtu"});
-      }
+      
 
       std::ofstream pvd_output(basename + ".pvd");
       DataOutBase::write_pvd_record(pvd_output, times_and_names);
@@ -1277,11 +1272,11 @@ namespace coanda
     parallel::distributed::GridRefinement::refine_and_coarsen_fixed_fraction(triangulation, estimated_error_per_cell, 0.6, 0.4);
     
     if (triangulation.n_levels() > max_grid_level)
-    {
-      for (auto cell = triangulation.begin_active(max_grid_level); cell != triangulation.end(); ++cell) { cell->clear_refine_flag(); }
-    }
+      for (auto cell = triangulation.begin_active(max_grid_level); cell != triangulation.end(); ++cell) 
+        cell->clear_refine_flag();
 
-    for (auto cell = triangulation.begin_active(min_grid_level); cell != triangulation.end_active(min_grid_level); ++cell) { cell->clear_coarsen_flag(); }
+    for (auto cell = triangulation.begin_active(min_grid_level); cell != triangulation.end_active(min_grid_level); ++cell)
+      cell->clear_coarsen_flag();
 
     parallel::distributed::SolutionTransfer<dim, PETScWrappers::MPI::BlockVector> trans1(dof_handler);
     parallel::distributed::SolutionTransfer<dim, PETScWrappers::MPI::BlockVector> trans2(dof_handler);
@@ -1291,10 +1286,10 @@ namespace coanda
     trans1.prepare_for_coarsening_and_refinement(present_solution);
 
     if (use_continuation)
-    {
       trans2.prepare_for_coarsening_and_refinement(steady_solution); 
-    }
-    else { (void)trans2; }
+    
+    else
+      (void)trans2; 
 
     triangulation.execute_coarsening_and_refinement();
 
@@ -1324,20 +1319,23 @@ namespace coanda
   template <int dim>
   void NS<dim>::compute_initial_guess()
   {
-    bool is_initial_step = true;
+    bool is_initial_step{true};
     const double target_viscosity{viscosity};
+    const bool steady_system{true};
+    const unsigned int n_max_iter{50};
+    const double tol{1e-7};
  
     for (double mu = viscosity_begin_continuation; mu >= target_viscosity; mu -= continuation_step_size)
     {
       viscosity = mu;
       pcout << "Searching for initial guess with mu = " << mu << std::endl;
 
-      const bool steady_system{true};
-      newton_iteration(steady_solution, 1e-7, 50, is_initial_step, steady_system);
+      newton_iteration(steady_solution, tol, n_max_iter, is_initial_step, steady_system);
       
       is_initial_step = false;
 
-      if (mu==target_viscosity) { break; }
+      if (mu==target_viscosity) 
+        break;
     }
 
     viscosity = target_viscosity;
@@ -1379,7 +1377,8 @@ namespace coanda
     while ((time.end() - time.current() > 1e-12) && (!should_stop)) 
     {
 
-      if (time.get_timestep() == 0) { output_results(0, false); }
+      if (time.get_timestep() == 0)
+        output_results(0, false);
 
       time.increment();
       std::cout.precision(6);
@@ -1402,7 +1401,8 @@ namespace coanda
         norm_increment = u_increment_norm/old_u_norm; // this could be inf, but no error is thrown
       }
 
-      if (norm_increment < stopping_criterion) { should_stop = true; }
+      if (norm_increment < stopping_criterion)
+        should_stop = true;
       pcout << " The relative distance between the two iterations is " << norm_increment << std::endl;
       relative_distances.push_back(norm_increment);
 
@@ -1420,7 +1420,8 @@ namespace coanda
 
       if (time.time_to_refine())
       {
-        if (adaptive_refinement) { refine_mesh(0, 2); }
+        if (adaptive_refinement) 
+          refine_mesh(0, 2);
       }
     }
   }

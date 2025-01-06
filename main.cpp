@@ -1,6 +1,5 @@
 /* -----------------------------------------------------------------------------
  TODO:
-    0) Solve the problem related to the first iteration of Newton's method
     1) Perform tests
       1.1) Find the steady, stable solution
       1.2) Without mesh refinement, symmetrical mesh
@@ -223,6 +222,12 @@ namespace coanda
 
 
 
+/* The SIMPLE preconditioner (which is implemented in the following) is largely based on its implementation in lifex-cfd
+ * (see https://gitlab.com/lifex/lifex-cfd/-/tree/main/source/helpers ).
+ * The only things which is changed here is that I got rid on the dependence of the implementation on other lifex helper functions. */ 
+
+
+
 // -------------------- SCHUR COMPLEMENT SPARSITY --------------------
 
   inline void schur_complement_sparsity(DynamicSparsityPattern &dst, const PETScWrappers::MPI::BlockSparseMatrix &src)
@@ -379,7 +384,7 @@ namespace coanda
   {
     TimerOutput::Scope timer_section(timer, "GMRES for preconditioner");
 
-    SolverControl F_inv_control(20000, 1e-6 * src.block(0).l2_norm());
+    SolverControl F_inv_control((*jacobian_matrix).block(0, 0).m(), 1e-5 * src.block(0).l2_norm());
     PETScWrappers::SolverGMRES F_solver(F_inv_control, jacobian_matrix->get_mpi_communicator());
 
     PETScWrappers::PreconditionBoomerAMG F_inv_preconditioner(mpi_communicator, PETScWrappers::PreconditionBoomerAMG::AdditionalData());
@@ -390,7 +395,7 @@ namespace coanda
     (*jacobian_matrix).block(1, 0).vmult(tmp.block(1), dst.block(0)); // t1 = (-B) * d0
 
     tmp.block(1).add(-1.0, src.block(1)); // t1 -= s1
-    SolverControl Schur_inv_control(20000, 1e-6 * tmp.block(1).l2_norm());
+    SolverControl Schur_inv_control(approximate_schur.m(), 1e-5 * tmp.block(1).l2_norm());
     PETScWrappers::SolverGMRES Schur_solver(Schur_inv_control, mpi_communicator);
 
     PETScWrappers::PreconditionBoomerAMG Schur_inv_preconditioner(mpi_communicator, PETScWrappers::PreconditionBoomerAMG::AdditionalData());
@@ -479,10 +484,9 @@ namespace coanda
     utmp = 0;
 
     {
-      //jacobian_matrix->block(0,0).print(std::cout); // useful for debugging
       TimerOutput::Scope timer_section(timer, "CG for Mp");
 
-      SolverControl mp_control(src.block(1).size(), 1e-6 * src.block(1).l2_norm());
+      SolverControl mp_control(src.block(1).size(), 1e-4 * src.block(1).l2_norm());
       PETScWrappers::SolverCG solver(mp_control, pressure_mass_matrix->get_mpi_communicator());
 
       PETScWrappers::PreconditionBlockJacobi Mp_preconditioner;
@@ -500,7 +504,7 @@ namespace coanda
       utmp *= -1.0;
       utmp += src.block(0);
 
-      SolverControl A_control(src.block(0).size(), 1e-6 * utmp.l2_norm());
+      SolverControl A_control(src.block(0).size(), 1e-4 * utmp.l2_norm());
       PETScWrappers::SparseDirectMUMPS solver(A_control, (jacobian_matrix->block(0,0)).get_mpi_communicator());
 
       PETScWrappers::PreconditionILU A_preconditioner;
@@ -529,6 +533,10 @@ namespace coanda
       const unsigned int n_glob_ref,
       const unsigned int jacobian_update_step,
       const double gamma,
+      const double time_end,
+      const double delta_t,
+      const double output_interval,
+      const double refinement_interval,
       const double viscosity,
       const double viscosity_begin_continuation=0, // not necessary to pass this if continuation is not used
       const double continuation_step_size=0 // same as in the previous line
@@ -636,6 +644,10 @@ namespace coanda
               const unsigned int n_glob_ref,
               const unsigned int jacobian_update_step,
               const double gamma,
+              const double time_end,
+              const double delta_t,
+              const double output_interval,
+              const double refinement_interval,
               const double viscosity,
               const double viscosity_begin_continuation,
               const double continuation_step_size
@@ -661,8 +673,8 @@ namespace coanda
       quad_formula(fe_degree + 2),
       face_quad_formula(fe_degree + 2),
       pcout(std::cout, Utilities::MPI::this_mpi_process(mpi_communicator) == 0),
-      time(30, 1e-2, 1e-1, 1e-1),
-      timer(mpi_communicator, pcout, TimerOutput::never, TimerOutput::wall_times)  
+      time(time_end, delta_t, output_interval, refinement_interval),
+      timer(mpi_communicator, pcout, TimerOutput::never, TimerOutput::wall_times)
   {
     make_grid();
   }
@@ -1016,19 +1028,6 @@ namespace coanda
         pressure_mass_matrix.compress(VectorOperation::add); 
         jacobian_matrix.block(1, 1) = 0;
         jacobian_matrix.compress(VectorOperation::add);
-
-        // For debugging purposes, if needed:
-        /*
-        jacobian_matrix.block(1,1).print(std::cout);
-        for (unsigned int i = 0; i<2; ++i)
-        {
-          for (unsigned int j =0; j<2; ++j)
-          {
-            pcout << "i, j -> (" << i << ", "<<j<<"), " << jacobian_matrix.block(i,j).frobenius_norm()<< std::endl;
-          }
-          pcout << "Norm of eval points block " << i << ": " << evaluation_points.block(i).l2_norm()<<std::endl;
-        }
-        */
       } 
     }
     system_rhs.compress(VectorOperation::add);
@@ -1044,6 +1043,7 @@ namespace coanda
     const bool assemble_jacobian{true};
     assemble(first_iteration, assemble_jacobian, steady_system);
     //pcout << "Frobenius norm of the Jacobian: " << jacobian_matrix.frobenius_norm() << std::endl;
+    pcout << "    The Jacobian matrix has been assembled" << std::endl;
 
     if (steady_system)
       steady_preconditioner.reset(new BlockSchurPreconditioner(timer, gamma, viscosity, jacobian_matrix, pressure_mass_matrix));
@@ -1052,7 +1052,7 @@ namespace coanda
       preconditioner.reset(new SIMPLE(mpi_communicator, timer, owned_partitioning, relevant_partitioning, jacobian_matrix));
       preconditioner -> assemble();
     }
-
+    pcout << "    The preconditioner has been assembled" << std::endl;
   }
  
 
@@ -1075,7 +1075,7 @@ namespace coanda
   {
     const AffineConstraints<double> &constraints_used = first_iteration ? nonzero_constraints : zero_constraints;
 
-    SolverControl solver_control(jacobian_matrix.m(), 1e-6 * system_rhs.l2_norm(), true);
+    SolverControl solver_control(jacobian_matrix.m(), 1e-5 * system_rhs.l2_norm(), true);
     GrowingVectorMemory<PETScWrappers::MPI::BlockVector> vector_memory;
     SolverFGMRES<PETScWrappers::MPI::BlockVector> gmres(solver_control, vector_memory);
 
@@ -1113,21 +1113,16 @@ namespace coanda
         setup_dofs();
         setup_system();
 
-        evaluation_points = 0; //dst
+        evaluation_points = 0;
 
         assemble_system(first_iteration, steady_system);
         solve(first_iteration, steady_system);
 
-        
-        PETScWrappers::MPI::BlockVector tmp;
-        tmp.reinit(owned_partitioning, mpi_communicator);
-        tmp = newton_update; // initial condition is 0, no need to add anything (adding 0)
-        nonzero_constraints.distribute(tmp);
+        nonzero_constraints.distribute(newton_update);
 
-        dst = tmp;
-        // not possible to write dst = newton_update; as this throws an error
+        dst = newton_update;
+        dst.update_ghost_values();
      
-
         first_iteration = false;
         evaluation_points = dst;
 
@@ -1146,7 +1141,9 @@ namespace coanda
 
         if (use_continuation && guess_u_norm!=0 && !steady_system && line_search_n==0)  // reinit initial guess
         {
-          PETScWrappers::MPI::BlockVector tmp_initial_guess;
+          PETScWrappers::MPI::BlockVector tmp_initial_guess; /* Now it is used to measure the distance between the solution at the previous
+                                                              * time step and the steady solution.
+                                                              * Afterwards, it will be reinitialized and used as an actual initial guess */
           tmp_initial_guess.reinit(owned_partitioning, mpi_communicator);
 
           tmp_initial_guess -= old_solution;
@@ -1155,10 +1152,12 @@ namespace coanda
           double dist_from_guess{tmp_initial_guess.l2_norm()};
           double alpha = dist_from_guess/guess_u_norm; // so that it is always in [0, 1]
 
-          evaluation_points.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
-          tmp_initial_guess.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
-          tmp_initial_guess += old_solution; // if alpha = 0, || initial_guess - old solution || = 0, so that initial_guess = old solution
-                                            // and I should only weight it with the initial guess so alpha should multiply the previous solution
+          evaluation_points.reinit(owned_partitioning, mpi_communicator);
+          evaluation_points = 0.0;
+
+          tmp_initial_guess.reinit(owned_partitioning, mpi_communicator);
+          tmp_initial_guess += old_solution; /* if alpha = 0, || initial_guess - old solution || = 0, so that initial_guess = old solution
+                                              * and I should only weight it with the initial guess so alpha should multiply the previous solution */
           tmp_initial_guess *= alpha;
           evaluation_points = steady_solution;  // (1-alpha)* initial_guess
           evaluation_points *= (1.0-alpha);
@@ -1166,10 +1165,7 @@ namespace coanda
         }
 
         else 
-        {
-          evaluation_points.reinit(owned_partitioning, mpi_communicator);
           evaluation_points = dst;
-        }
 
         // We do not update the Jacobian at each iteration to reduce the cost
         if (line_search_n % jacobian_update_step == 0 || line_search_n < 2)
@@ -1183,6 +1179,7 @@ namespace coanda
         {
           evaluation_points.reinit(owned_partitioning, mpi_communicator);
           evaluation_points = dst;
+
           PETScWrappers::MPI::BlockVector tmp;
           tmp.reinit(owned_partitioning, mpi_communicator);
           tmp = newton_update;
@@ -1201,6 +1198,7 @@ namespace coanda
         }
 
         dst = evaluation_points;
+        dst.update_ghost_values();
                 
         {
           pcout << "  number of line searches: " << line_search_n << "  residual: " << current_res << std::endl;
@@ -1291,12 +1289,14 @@ namespace coanda
     TimerOutput::Scope timer_section(timer, "Refine mesh");
     pcout << "Refining mesh..." << std::endl;
 
+
     Vector<float> estimated_error_per_cell(triangulation.n_active_cells());
     const FEValuesExtractors::Vector velocity(0);
 
     KellyErrorEstimator<dim>::estimate(dof_handler, face_quad_formula, {}, present_solution, estimated_error_per_cell, fe.component_mask(velocity));
     parallel::distributed::GridRefinement::refine_and_coarsen_fixed_fraction(triangulation, estimated_error_per_cell, 0.6, 0.4);
     
+
     if (triangulation.n_levels() > max_grid_level)
       for (auto cell = triangulation.begin_active(max_grid_level); cell != triangulation.end(); ++cell) 
         cell->clear_refine_flag();
@@ -1304,8 +1304,10 @@ namespace coanda
     for (auto cell = triangulation.begin_active(min_grid_level); cell != triangulation.end_active(min_grid_level); ++cell)
       cell->clear_coarsen_flag();
 
+
     parallel::distributed::SolutionTransfer<dim, PETScWrappers::MPI::BlockVector> trans1(dof_handler);
     parallel::distributed::SolutionTransfer<dim, PETScWrappers::MPI::BlockVector> trans2(dof_handler);
+
 
     triangulation.prepare_coarsening_and_refinement();
 
@@ -1313,31 +1315,41 @@ namespace coanda
 
     if (use_continuation)
       trans2.prepare_for_coarsening_and_refinement(steady_solution); 
-    
     else
       (void)trans2; 
 
     triangulation.execute_coarsening_and_refinement();
 
+
     // Reinitialize the system
     setup_dofs();
+    setup_system();
+
 
     // Transfer solution
     // Need a non-ghosted vector for interpolation
     PETScWrappers::MPI::BlockVector tmp(newton_update);
     tmp = 0;
+
     trans1.interpolate(tmp);
     present_solution = tmp;
+    old_solution = present_solution;
+
+    present_solution.update_ghost_values();
+    old_solution.update_ghost_values();
+
+    
+
 
     if (use_continuation) 
     {
       tmp = 0;
+
       trans2.interpolate(tmp);
       steady_solution = tmp;
-    }
 
-    setup_system();
-
+      steady_solution.update_ghost_values();
+    } 
   }
 
 
@@ -1414,7 +1426,7 @@ namespace coanda
       pcout << std::string(96, '*') << std::endl << "Time step = " << time.get_timestep() << ", at t = " << std::scientific << time.current() << std::endl;
       
       const bool steady_system{false};
-      newton_iteration(present_solution, 1e-9, 75, first_iteration, steady_system);
+      newton_iteration(present_solution, 1e-10, 50, first_iteration, steady_system);
 
       double norm_increment;
 
@@ -1476,19 +1488,35 @@ int main(int argc, char *argv[])
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
     
     const double theta{0.5}; // using the trapezoidal rule to integrate in time
+
     const bool adaptive_refinement{true};
-    const bool use_continuation{true};
+
+    const bool use_continuation{false};
     const bool distort_mesh{false};
+
     const unsigned int fe_degree{1};
+
     const double stopping_criterion{1e-10};
+
     const unsigned int n_glob_ref{1};
+
     const unsigned int jacobian_update_step{4};
+
     const double gamma{1.0};
+
+    const double time_end{40};
+    const double delta_t{1e-2};
+    const double output_interval{1e-1};
+    const double refinement_interval{1e-1};
+
     const double viscosity{0.7};
+    
     const double viscosity_begin_continuation{0.72};
     const double continuation_step_size{1e-2};
     
-    NS<2> bifurc_NS{theta,
+
+    NS<2> bifurc_NS{
+                    theta,
                     adaptive_refinement,
                     use_continuation,
                     distort_mesh,
@@ -1497,9 +1525,14 @@ int main(int argc, char *argv[])
                     n_glob_ref,
                     jacobian_update_step,
                     gamma,
+                    time_end,
+                    delta_t,
+                    output_interval,
+                    refinement_interval,
                     viscosity,
                     viscosity_begin_continuation,
-                    continuation_step_size};
+                    continuation_step_size
+                  };
 
     bifurc_NS.run();
   }

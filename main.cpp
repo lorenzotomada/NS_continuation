@@ -1,5 +1,6 @@
 /* -----------------------------------------------------------------------------
  TODO:
+    0) Find a decent solver for the preconditioner in the steady case
     1) Perform tests
       1.1) Find the steady, stable solution
       1.2) Without mesh refinement, symmetrical mesh
@@ -8,6 +9,7 @@
       1.5) With mesh refinement, symmetrical mesh, asymmetrical refinement (set refinement flag only e.g. if y > 7.5/2)
       1.6) Combine with initial guesses and see what changes (either, if possible, trying to obtain the other branch, or to get immediately the unstable one)
       1.7) At least hints for the 3D case
+      1.8) Refine the mesh according to the steady system and use it as fixed mesh for time stepping
     2) Explain some details
       2.1) Why there is not a separate function for mesh-depending matrix and other components
       2.2) Why no trapezoidal rule
@@ -486,7 +488,7 @@ namespace coanda
     {
       TimerOutput::Scope timer_section(timer, "CG for Mp");
 
-      SolverControl mp_control(src.block(1).size(), 1e-4 * src.block(1).l2_norm());
+      SolverControl mp_control(src.block(1).size(), 1e-6 * src.block(1).l2_norm());
       PETScWrappers::SolverCG solver(mp_control, pressure_mass_matrix->get_mpi_communicator());
 
       PETScWrappers::PreconditionBlockJacobi Mp_preconditioner;
@@ -505,12 +507,10 @@ namespace coanda
       utmp += src.block(0);
 
       SolverControl A_control(src.block(0).size(), 1e-4 * utmp.l2_norm());
+      
       PETScWrappers::SparseDirectMUMPS solver(A_control, (jacobian_matrix->block(0,0)).get_mpi_communicator());
-
-      PETScWrappers::PreconditionILU A_preconditioner;
-      A_preconditioner.initialize(jacobian_matrix->block(0,0));
-      //PETScWrappers::PreconditionBoomerAMG A_preconditioner(jacobian_matrix->block(0,0), PETScWrappers::PreconditionBoomerAMG::AdditionalData{});
-      //solver.solve(jacobian_matrix->block(0,0), dst.block(0), utmp, A_preconditioner);
+      solver.set_symmetric_mode(true);
+      
       solver.solve(jacobian_matrix->block(0,0), dst.block(0), utmp);
     }
   }
@@ -1151,13 +1151,15 @@ namespace coanda
 
           double dist_from_guess{tmp_initial_guess.l2_norm()};
           double alpha = dist_from_guess/guess_u_norm; // so that it is always in [0, 1]
+          pcout << "  The relative distance between the solution at the previous time step and the one to the steady problem is " << alpha << std::endl;
 
           evaluation_points.reinit(owned_partitioning, mpi_communicator);
           evaluation_points = 0.0;
 
           tmp_initial_guess.reinit(owned_partitioning, mpi_communicator);
           tmp_initial_guess += old_solution; /* if alpha = 0, || initial_guess - old solution || = 0, so that initial_guess = old solution
-                                              * and I should only weight it with the initial guess so alpha should multiply the previous solution */
+                                              * and I should only weight it with the initial guess so alpha should multiply the 
+                                              * previous solution */
           tmp_initial_guess *= alpha;
           evaluation_points = steady_solution;  // (1-alpha)* initial_guess
           evaluation_points *= (1.0-alpha);
@@ -1496,7 +1498,7 @@ int main(int argc, char *argv[])
 
     const unsigned int fe_degree{1};
 
-    const double stopping_criterion{1e-10};
+    const double stopping_criterion{1e-30};
 
     const unsigned int n_glob_ref{1};
 
@@ -1504,14 +1506,14 @@ int main(int argc, char *argv[])
 
     const double gamma{1.0};
 
-    const double time_end{40};
+    const double time_end{70};
     const double delta_t{1e-2};
     const double output_interval{1e-1};
     const double refinement_interval{1e-1};
 
-    const double viscosity{0.7};
+    const double viscosity{0.6};
     
-    const double viscosity_begin_continuation{0.72};
+    const double viscosity_begin_continuation{2.0};
     const double continuation_step_size{1e-2};
     
 

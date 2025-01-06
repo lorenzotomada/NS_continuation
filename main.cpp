@@ -190,7 +190,6 @@ namespace coanda
     BoundaryValues() : Function<dim>(dim + 1) {}
 
     virtual double value(const Point<dim> &p, const unsigned int component) const override;
-    //virtual void vector_value(const Point<dim> &p, Vector<double> &values) const override;
   };
 
 
@@ -222,16 +221,6 @@ namespace coanda
     return 0;
   }
 
-
-/*
-// -------------------- BOUNDARY VALUES VECTOR VALUE --------------------
-
-  template <int dim>
-  void BoundaryValues<dim>::vector_value(const Point<dim> &p, Vector<double> &values) const 
-  {
-    for (unsigned int c = 0; c < this->n_components; ++c) { values(c) = BoundaryValues<dim>::value(p, c); }
-  }
-*/
 
 
 // -------------------- SCHUR COMPLEMENT SPARSITY --------------------
@@ -448,8 +437,8 @@ namespace coanda
     public:
     BlockSchurPreconditioner(
     TimerOutput &timer,
-    double gamma,
-    double viscosity,
+    const double gamma,
+    const double viscosity,
     const PETScWrappers::MPI::BlockSparseMatrix &jacobian_matrix,
     PETScWrappers::MPI::SparseMatrix &pressure_mass_matrix);
   
@@ -469,8 +458,8 @@ namespace coanda
 // -------------------- BLOCK SCHUR PRECONDITIONER CONSTRUCTOR --------------------
 
   BlockSchurPreconditioner::BlockSchurPreconditioner(TimerOutput &timer,
-                                                    double gamma,
-                                                    double viscosity,
+                                                    const double gamma,
+                                                    const double viscosity,
                                                     const PETScWrappers::MPI::BlockSparseMatrix &jacobian_matrix,
                                                     PETScWrappers::MPI::SparseMatrix &pressure_mass_matrix)
     : timer(timer),
@@ -530,7 +519,8 @@ namespace coanda
   class NS
   {
     public:
-    NS(const double theta,
+    NS(
+      const double theta,
       const bool adaptive_refinement,
       const bool use_continuation,
       const bool distort_mesh,
@@ -541,7 +531,8 @@ namespace coanda
       const double gamma,
       const double viscosity,
       const double viscosity_begin_continuation=0, // not necessary to pass this if continuation is not used
-      const double continuation_step_size=0); // same
+      const double continuation_step_size=0 // same as in the previous line
+      );
 
     void run();
 
@@ -565,11 +556,13 @@ namespace coanda
 
     void output_results(const unsigned int output_index, const bool output_steady_solution=false) const;
 
-    void newton_iteration(PETScWrappers::MPI::BlockVector &dst,
+    void newton_iteration(
+                          PETScWrappers::MPI::BlockVector &dst,
                           const double tolerance,
                           const unsigned int max_n_line_searches,
                           const bool is_initial_step,
-                          const bool steady_system=false);
+                          const bool steady_system=false
+                          );
 
     void compute_initial_guess();
     
@@ -633,7 +626,8 @@ namespace coanda
 // -------------------- CONSTRUCTOR --------------------
 
   template <int dim>
-  NS<dim>::NS(const double theta,
+  NS<dim>::NS(
+              const double theta,
               const bool adaptive_refinement,
               const bool use_continuation,
               const bool distort_mesh,
@@ -667,7 +661,7 @@ namespace coanda
       quad_formula(fe_degree + 2),
       face_quad_formula(fe_degree + 2),
       pcout(std::cout, Utilities::MPI::this_mpi_process(mpi_communicator) == 0),
-      time(20, 1e-2, 1e-2, 1e-1),
+      time(30, 1e-2, 1e-1, 1e-1),
       timer(mpi_communicator, pcout, TimerOutput::never, TimerOutput::wall_times)  
   {
     make_grid();
@@ -763,18 +757,18 @@ namespace coanda
   template <int dim>
   void NS<dim>::setup_dofs()
   {
-    preconditioner.reset();
-    steady_preconditioner.reset();
     jacobian_matrix.clear();
     pressure_mass_matrix.clear();
+    preconditioner.reset();
+    steady_preconditioner.reset();
 
     dof_handler.distribute_dofs(fe);
 
     std::vector<unsigned int> block_component(dim + 1, 0);
     block_component[dim] = 1;
     DoFRenumbering::component_wise(dof_handler, block_component);
-    dofs_per_block = DoFTools::count_dofs_per_fe_block(dof_handler, block_component);
 
+    dofs_per_block = DoFTools::count_dofs_per_fe_block(dof_handler, block_component);
     unsigned int dof_u = dofs_per_block[0];
     unsigned int dof_p = dofs_per_block[1];
 
@@ -800,17 +794,19 @@ namespace coanda
 
       // Apply Dirichlet boundary conditions on all Dirichlet boundaries except for the outlet.
       std::vector<unsigned int> dirichlet_bc_ids{1, 3};
-      //dirichlet_bc_ids = std::vector<unsigned int>{1, 3};
 
       for (auto id : dirichlet_bc_ids)
       {
-        VectorTools::interpolate_boundary_values(dof_handler,
+        VectorTools::interpolate_boundary_values(
+                                                dof_handler,
                                                 id,
                                                 BoundaryValues<dim>(),
                                                 nonzero_constraints,
                                                 fe.component_mask(velocities)
                                                 );
-        VectorTools::interpolate_boundary_values(dof_handler,
+
+        VectorTools::interpolate_boundary_values(
+                                                dof_handler,
                                                 id,
                                                 Functions::ZeroFunction<dim>(dim + 1),
                                                 zero_constraints,
@@ -819,7 +815,7 @@ namespace coanda
       }
 
       DoFTools::make_hanging_node_constraints(dof_handler, nonzero_constraints);
-      //DoFTools::make_hanging_node_constraints(dof_handler, zero_constraints);
+      DoFTools::make_hanging_node_constraints(dof_handler, zero_constraints);
 
       nonzero_constraints.close();
       zero_constraints.close();
@@ -837,7 +833,8 @@ namespace coanda
     DoFTools::make_sparsity_pattern(dof_handler, dsp, nonzero_constraints);
     sparsity_pattern.copy_from(dsp);
 
-    SparsityTools::distribute_sparsity_pattern(dsp,
+    SparsityTools::distribute_sparsity_pattern(
+                                              dsp,
                                               dof_handler.locally_owned_dofs(),
                                               mpi_communicator,
                                               locally_relevant_dofs
@@ -845,14 +842,14 @@ namespace coanda
       
     jacobian_matrix.reinit(owned_partitioning, dsp, mpi_communicator);
     pressure_mass_matrix.reinit(owned_partitioning[1], dsp.block(1, 1), mpi_communicator);
-    //pressure_mass_matrix.reinit(owned_partitioning, dsp, mpi_communicator);
 
     present_solution.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
     old_solution.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
     evaluation_points.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
-    system_rhs.reinit(owned_partitioning, mpi_communicator); // non-ghosted
-    newton_update.reinit(owned_partitioning, mpi_communicator); // non-ghosted
     steady_solution.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
+    // The following two vectors are non-ghosted, since the solver cannot work on ghosted vectors
+    system_rhs.reinit(owned_partitioning, mpi_communicator);
+    newton_update.reinit(owned_partitioning, mpi_communicator);
   }
 
 
@@ -882,18 +879,15 @@ namespace coanda
 
     std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
 
+
     std::vector<Tensor<1, dim>> present_velocity_values(n_q_points);
     std::vector<Tensor<2, dim>> present_velocity_gradients(n_q_points);
     std::vector<double> present_pressure_values(n_q_points);
 
     std::vector<Tensor<1, dim>> old_velocity_values(n_q_points);
     std::vector<Tensor<2, dim>> old_velocity_gradients(n_q_points);
-    //std::vector<double> old_pressure_values(n_q_points);
 
     std::vector<Tensor<1, dim>> tmp(n_q_points); // old solution velocity - present velocity
-
-    //std::vector<double> present_velocity_divergences(n_q_points);
-    //std::vector<double> old_velocity_divergences(n_q_points);
 
 
     std::vector<double> div_phi_u(dofs_per_cell);
@@ -908,25 +902,23 @@ namespace coanda
       {
         fe_values.reinit(cell);
 
-        if (assemble_jacobian)
-          local_matrix = 0;
-
+        local_matrix = 0;
         local_rhs = 0;
+
 
         fe_values[velocities].get_function_values(evaluation_points, present_velocity_values);
         fe_values[velocities].get_function_gradients(evaluation_points, present_velocity_gradients);
-        //fe_values[velocities].get_function_divergences(evaluation_points, present_velocity_divergences);
         fe_values[pressure].get_function_values(evaluation_points, present_pressure_values);
 
         fe_values[velocities].get_function_values(old_solution, old_velocity_values);
         fe_values[velocities].get_function_gradients(old_solution, old_velocity_gradients);
-        //fe_values[velocities].get_function_divergences(old_solution, old_velocity_divergences);
-        //fe_values[pressure].get_function_values(old_solution, old_pressure_values);
 
         fe_values[velocities].get_function_values(old_solution, tmp);
 
+
         for (size_t i = 0; i < tmp.size(); ++i) 
           tmp[i] -= present_velocity_values[i];
+
 
         for (unsigned int q = 0; q < n_q_points; ++q)
         {
@@ -946,24 +938,23 @@ namespace coanda
               {
                 const double quantity1 = viscosity * scalar_product(grad_phi_u[i], grad_phi_u[j])        //   a(u, v) ---> mu*grad(u)*grad(v)  
                       + phi_u[i] * (present_velocity_gradients[q] * phi_u[j])                            //   Linearization of the convective term (pt. 1) 
-                      + phi_u[i] * (present_velocity_values[q] * grad_phi_u[j]);                         //   Linearization of the convective term (pt. 2) 
+                      + phi_u[i] * (grad_phi_u[j] * present_velocity_values[q]);                         //   Linearization of the convective term (pt. 2) 
                 
                 const double quantity2 = - div_phi_u[i] * phi_p[j]                                       //   b(v, p) = -p*div(v)   
                       - phi_p[i] * div_phi_u[j];                                                         //   b(u, q) = -q*div(u)  
 
                 if (!steady_system)
                 {
-                  const double mass_matrix_contribution = (phi_u[i] * phi_u[j]) / time.get_delta_t(); //   From time stepping, 1/dt*M
-                  local_matrix(i, j) += (theta*quantity1 + quantity2 + mass_matrix_contribution)*fe_values.JxW(q);           // fully implicit in the terms involving B
+                  const double mass_matrix_contribution = (phi_u[i] * phi_u[j]) / time.get_delta_t();    //   From time stepping, 1/dt*M
+                  local_matrix(i, j) += (theta*quantity1 + quantity2 + mass_matrix_contribution)*fe_values.JxW(q); // fully implicit in the terms involving B
                 }
 
                 else
-                  local_matrix(i, j) += (quantity1 + quantity2 + gamma*div_phi_u[i]*div_phi_u[j]  + phi_p[i]*phi_p[j])*fe_values.JxW(q);
+                  local_matrix(i, j) += (quantity1 + quantity2 + gamma*div_phi_u[i]*div_phi_u[j] + phi_p[i]*phi_p[j])*fe_values.JxW(q);
               }
             }
 
             double present_velocity_divergence = trace(present_velocity_gradients[q]);
-            //double old_velocity_divergence = trace(old_velocity_gradients[q]);
 
             // contributions from the right hand-side at times t^n and t^{n+1}
 
@@ -981,13 +972,10 @@ namespace coanda
                         + phi_p[i] * present_velocity_divergence
                         ) * fe_values.JxW(q);
 
-              local_rhs(i) += (
-                        (1-theta)*
+              local_rhs(i) += ( (1-theta)*
                         (
                         -viscosity * scalar_product(grad_phi_u[i], old_velocity_gradients[q])
                         - phi_u[i] * (old_velocity_gradients[q] * old_velocity_values[q])
-                        //+ div_phi_u[i] * old_pressure_values[q]
-                        //+ phi_p[i] * old_velocity_divergence
                         )
                         ) * fe_values.JxW(q);
             }
@@ -1009,7 +997,7 @@ namespace coanda
         cell->get_dof_indices(local_dof_indices);
 
         const AffineConstraints<double> &constraints_used = first_iteration ? nonzero_constraints : zero_constraints;
-
+       
         if (assemble_jacobian)
           constraints_used.distribute_local_to_global(local_matrix, local_rhs, local_dof_indices, jacobian_matrix, system_rhs);
         else
@@ -1027,9 +1015,22 @@ namespace coanda
         pressure_mass_matrix.copy_from(jacobian_matrix.block(1, 1));
         pressure_mass_matrix.compress(VectorOperation::add); 
         jacobian_matrix.block(1, 1) = 0;
+        jacobian_matrix.compress(VectorOperation::add);
+
+        // For debugging purposes, if needed:
+        /*
+        jacobian_matrix.block(1,1).print(std::cout);
+        for (unsigned int i = 0; i<2; ++i)
+        {
+          for (unsigned int j =0; j<2; ++j)
+          {
+            pcout << "i, j -> (" << i << ", "<<j<<"), " << jacobian_matrix.block(i,j).frobenius_norm()<< std::endl;
+          }
+          pcout << "Norm of eval points block " << i << ": " << evaluation_points.block(i).l2_norm()<<std::endl;
+        }
+        */
       } 
     }
-    
     system_rhs.compress(VectorOperation::add);
   }
 
@@ -1074,7 +1075,7 @@ namespace coanda
   {
     const AffineConstraints<double> &constraints_used = first_iteration ? nonzero_constraints : zero_constraints;
 
-    SolverControl solver_control(jacobian_matrix.m(), 1e-5 * system_rhs.l2_norm(), true);
+    SolverControl solver_control(jacobian_matrix.m(), 1e-6 * system_rhs.l2_norm(), true);
     GrowingVectorMemory<PETScWrappers::MPI::BlockVector> vector_memory;
     SolverFGMRES<PETScWrappers::MPI::BlockVector> gmres(solver_control, vector_memory);
 
@@ -1117,13 +1118,15 @@ namespace coanda
         assemble_system(first_iteration, steady_system);
         solve(first_iteration, steady_system);
 
+        
         PETScWrappers::MPI::BlockVector tmp;
         tmp.reinit(owned_partitioning, mpi_communicator);
         tmp = newton_update; // initial condition is 0, no need to add anything (adding 0)
         nonzero_constraints.distribute(tmp);
 
         dst = tmp;
-        // try to write dst = newton_update;
+        // not possible to write dst = newton_update; as this throws an error
+     
 
         first_iteration = false;
         evaluation_points = dst;
@@ -1169,7 +1172,7 @@ namespace coanda
         }
 
         // We do not update the Jacobian at each iteration to reduce the cost
-        if (line_search_n % jacobian_update_step == 0 || line_search_n < 3)
+        if (line_search_n % jacobian_update_step == 0 || line_search_n < 2)
           assemble_system(first_iteration, steady_system);
         else
           assemble_rhs(first_iteration, steady_system);
@@ -1474,7 +1477,7 @@ int main(int argc, char *argv[])
     
     const double theta{0.5}; // using the trapezoidal rule to integrate in time
     const bool adaptive_refinement{true};
-    const bool use_continuation{false};
+    const bool use_continuation{true};
     const bool distort_mesh{false};
     const unsigned int fe_degree{1};
     const double stopping_criterion{1e-10};

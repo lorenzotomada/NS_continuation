@@ -1,25 +1,7 @@
-/* -----------------------------------------------------------------------------
- TODO:
-    0) Find a decent solver for the preconditioner in the steady case (move MUMPS as class attribute)
-      0.1) Vedi quali includes puoi togliere
-    1) Perform tests
-      1.1) Find the steady, stable solution
-      1.2) Without mesh refinement, symmetrical mesh
-      1.3) Without mesh refinement, asymmetrical mesh
-      1.4) With mesh refinement, symmetrical mesh
-      1.5) With mesh refinement, symmetrical mesh, asymmetrical refinement (set refinement flag only e.g. if y > 7.5/2)
-      1.6) Combine with initial guesses and see what changes (either, if possible, trying to obtain the other branch, or to get immediately the unstable one)
-      1.7) At least hints for the 3D case
-      1.8) Refine the mesh according to the steady system and use it as fixed mesh for time stepping
-    2) Explain some details
-      2.1) Why there is not a separate function for mesh-depending matrix and other components
-      2.2) Why no trapezoidal rule
-      2.3) Why need to keep first_iteration
-      2.4) Why two preconditioners are used 
-* ------------------------------------------------------------------------------ */
 
+We begin by including the usual files:
 
-
+```cpp
 #include <deal.II/base/function.h>
 #include <deal.II/base/logstream.h>
 #include <deal.II/base/quadrature_lib.h>
@@ -83,17 +65,22 @@
 #include <sstream>
 
 
+```
 
-// --------------------------------------------- NAMESPACE COANDA ---------------------------------------------
+Now, we define a namespace enclosing all the code which is written (both the NS class and its helper functions):
 
+```cpp
 namespace coanda
 {
   using namespace dealii;
 
 
+```
 
-// -------------------- SAVE VECTORS FOR VISUALIZATION USING NUMPY --------------------
+The following function is needed to save the vectors which help us keeping track of the bifurcating behaviour of the solution (more on that in the following). The vectors are saved in .csv format.
 
+
+```cpp
   void save_vector(const std::vector<double>& vec, const std::string& filename)
   {
     try
@@ -115,9 +102,16 @@ namespace coanda
   }
 
 
+```
 
-// ------------------------------- TIME CLASS -------------------------------
+We define the `Time` class, which carries out the following tasks:
+  - keep track of the current time 
+  - define the time $T_{\mathrm{end}}$
+  - save the time stepsize $\Delta t$ (assumed to be constant)
+  - specify whether the current time is marked for saving the solution
+  - specify whether the current time is marked for mesh refinement
 
+```cpp
   class Time
   {
   public:
@@ -130,7 +124,11 @@ namespace coanda
         refinement_interval(refinement_interval)
     {}
 
+```
 
+The following functions are pretty self-explanatory and are not commented in detail.
+
+```cpp
     double current() const { return time_current; }
     double end() const { return time_end; }
     double get_delta_t() const { return delta_t; }
@@ -153,7 +151,7 @@ namespace coanda
 
 
 
-// -------------------- TIME UTILITIES --------------------
+  // Returns true if the current time is marked for output 
 
   bool Time::time_to_output() const
   {
@@ -162,12 +160,18 @@ namespace coanda
   }
 
 
+
+  // Returns true if the current time is marked for mesh refinement
+
   bool Time::time_to_refine() const
   {
     unsigned int delta = static_cast<unsigned int>(refinement_interval / delta_t);
     return (timestep >= delta && timestep % delta == 0);
   }
 
+
+  
+  // Function to update the current time and the timestep
 
   void Time::increment()
   {
@@ -177,8 +181,12 @@ namespace coanda
 
 
 
-// -------------------- DBCs --------------------
+```
 
+The following function will be used to define the boundary conditions. 
+Recall that 
+
+```cpp
   template <int dim>
   class BoundaryValues : public Function<dim>
   {
@@ -189,8 +197,14 @@ namespace coanda
   };
 
 
+```
+The boundary values function is defined as follows. Both in $2$D and in $3$D its values can be different from $0$ only in the inlet part of the boundary $\Gamma_{\mathrm{inlet}}$.
 
-// -------------------- BOUNDARY VALUES VALUE FUNCTION --------------------
+In order to ensure continuity of the boundary conditions, 
+
+
+```cpp
+
   
   template <int dim>
   double BoundaryValues<dim>::value(const Point<dim> &p, const unsigned int component) const
@@ -1491,7 +1505,7 @@ int main(int argc, char *argv[])
 
     const bool adaptive_refinement{true};
 
-    const bool use_continuation{false};
+    const bool use_continuation{true};
     const bool distort_mesh{false};
 
     const unsigned int fe_degree{1};
@@ -1553,3 +1567,5 @@ int main(int argc, char *argv[])
   }
   return 0;
 }
+
+```

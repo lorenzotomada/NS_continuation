@@ -1,8 +1,7 @@
 /* -----------------------------------------------------------------------------
  TODO:
     0) Minimal changes
-      0.1) Better preconditioner for SIMPLE
-      0.2) Mesh refinement separately for the steady and unsteady case
+      0.1) Reorder a bit the arguments passed to the constructor
     1) Perform tests
       1.1) Find the steady, stable solution
       1.2) Without mesh refinement, symmetrical mesh
@@ -12,8 +11,9 @@
       1.6) Combine with initial guesses and see what changes (either, if possible, trying to obtain the other branch, or to get immediately the unstable one)
       1.7) At least hints for the 3D case
       1.8) Refine the mesh according to the steady system and use it as fixed mesh for time stepping
-    2) Explain some details
-      2.1) Why there is not a separate function for mesh-depending matrix and other components
+    2) Write the presentation
+      2.1) Write a deal.II-like tutorial in tutorial.md
+      2.2) Write a pdf file with the summary of the results which we expect
 * ------------------------------------------------------------------------------ */
 
 
@@ -90,7 +90,7 @@ namespace coanda
 
 
 
-// -------------------- SAVE VECTORS FOR VISUALIZATION USING NUMPY --------------------
+// -------------------- SAVE VECTORS FOR VISUALIZATION --------------------
 
   void save_vector(const std::vector<double>& vec, const std::string& filename)
   {
@@ -215,12 +215,6 @@ namespace coanda
 
 
 
-/* The SIMPLE preconditioner (which is implemented in the following) is largely based on its implementation in lifex-cfd
- * (see https://gitlab.com/lifex/lifex-cfd/-/tree/main/source/helpers ).
- * The only things which is changed here is that I got rid on the dependence of the implementation on other lifex helper functions. */ 
-
-
-
 // -------------------- SCHUR COMPLEMENT SPARSITY --------------------
 
   inline void schur_complement_sparsity(DynamicSparsityPattern &dst, const PETScWrappers::MPI::BlockSparseMatrix &src)
@@ -302,6 +296,9 @@ namespace coanda
 
     mutable PETScWrappers::MPI::BlockVector tmp;
     PETScWrappers::MPI::Vector diag_F_inv;
+
+    SolverControl tmp_solver_control;
+    mutable PETScWrappers::SparseDirectMUMPS F_solver;
   };
 
 
@@ -317,7 +314,8 @@ namespace coanda
     timer(timer),
     owned_partitioning(owned_partitioning),
     relevant_partitioning(relevant_partitioning),
-    jacobian_matrix(&jacobian_matrix)
+    jacobian_matrix(&jacobian_matrix),
+    F_solver(tmp_solver_control, (this->jacobian_matrix->block(0,0)).get_mpi_communicator())
   { 
     tmp.reinit(owned_partitioning, mpi_communicator);
   }
@@ -379,33 +377,29 @@ namespace coanda
 
   void SIMPLE::vmult_L(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const
   {
-    TimerOutput::Scope timer_section(timer, "GMRES for preconditioner");
+    TimerOutput::Scope timer_section(timer, "vmult_L");
 
-    SolverControl F_inv_control((*jacobian_matrix).block(0, 0).m(), 1e-4 * src.block(0).l2_norm());
-    PETScWrappers::SolverGMRES F_solver(F_inv_control, jacobian_matrix->get_mpi_communicator());
 
-    PETScWrappers::PreconditionBoomerAMG F_inv_preconditioner(mpi_communicator, PETScWrappers::PreconditionBoomerAMG::AdditionalData{});
-    F_inv_preconditioner.initialize(jacobian_matrix->block(0, 0));
+    F_solver.solve((*jacobian_matrix).block(0, 0), dst.block(0), src.block(0)); // d0 = F^{-1} * s0
 
-    F_solver.solve((*jacobian_matrix).block(0, 0), dst.block(0), src.block(0), F_inv_preconditioner); // d0 = F^{-1} * s0
 
     (*jacobian_matrix).block(1, 0).vmult(tmp.block(1), dst.block(0)); // t1 = (-B) * d0
-
     tmp.block(1).add(-1.0, src.block(1)); // t1 -= s1
+
+
     SolverControl Schur_inv_control(approximate_schur.m(), 1e-4 * tmp.block(1).l2_norm());
     PETScWrappers::SolverGMRES Schur_solver(Schur_inv_control, mpi_communicator);
-
     PETScWrappers::PreconditionBoomerAMG Schur_inv_preconditioner(mpi_communicator, PETScWrappers::PreconditionBoomerAMG::AdditionalData{});
     Schur_inv_preconditioner.initialize(approximate_schur);
 
+
     //Schur_solver.solve(approximate_schur, dst.block(1), tmp.block(1), Schur_inv_preconditioner); // d1 = (-Sigma^{-1}) * t1
     // this throws an error: the initial guess can't be empty
-
     PETScWrappers::MPI::Vector solution(dst.block(1));
     solution = 0.0;
     Schur_solver.solve(approximate_schur, solution, tmp.block(1), Schur_inv_preconditioner); // d1 = (-Sigma^{-1}) * t1
-
     dst.block(1) = solution;
+
 
     // In case of defective flow BC treatment the Navier-Stokes system matrix
     // has an extra block associated with the Lagrange multipliers (n_blocks=3).
@@ -522,6 +516,7 @@ namespace coanda
     NS(
       const double theta,
       const bool adaptive_refinement,
+      const bool adaptive_refinement_after_continuation,
       const bool use_continuation,
       const bool distort_mesh,
       const unsigned int fe_degree,
@@ -534,8 +529,8 @@ namespace coanda
       const double output_interval,
       const double refinement_interval,
       const double viscosity,
-      const double viscosity_begin_continuation=0, // not necessary to pass this if continuation is not used
-      const double continuation_step_size=0 // same as in the previous line
+      const double viscosity_begin_continuation, // not necessary to pass this if continuation is not used
+      const double continuation_step_size // same as in the previous line
       );
 
     void run();
@@ -556,7 +551,7 @@ namespace coanda
 
     void solve(const bool first_iteration, const bool steady_system=false);
 
-    void refine_mesh(const unsigned int min_grid_level, const unsigned int max_grid_level);
+    void refine_mesh(const unsigned int min_grid_level, const unsigned int max_grid_level, const bool is_before_time_stepping=false);
 
     void output_results(const unsigned int output_index, const bool output_steady_solution=false) const;
 
@@ -574,6 +569,7 @@ namespace coanda
     MPI_Comm mpi_communicator;
     const double theta;
     const bool adaptive_refinement;
+    const bool adaptive_refinement_after_continuation;
     const bool use_continuation;
     const bool distort_mesh; // done following https://www.dealii.org/current/doxygen/deal.II/step_49.html
     const unsigned int fe_degree; // added wrt step 57
@@ -608,7 +604,6 @@ namespace coanda
     PETScWrappers::MPI::BlockVector newton_update;
     PETScWrappers::MPI::BlockVector system_rhs;
 
-
     ConditionalOStream pcout;
     std::vector<types::global_dof_index> dofs_per_block;
     std::vector<IndexSet> owned_partitioning;
@@ -633,6 +628,7 @@ namespace coanda
   NS<dim>::NS(
               const double theta,
               const bool adaptive_refinement,
+              const bool adaptive_refinement_after_continuation,
               const bool use_continuation,
               const bool distort_mesh,
               const unsigned int fe_degree,
@@ -651,6 +647,7 @@ namespace coanda
     : mpi_communicator(MPI_COMM_WORLD),
       theta(theta),
       adaptive_refinement(adaptive_refinement),
+      adaptive_refinement_after_continuation(adaptive_refinement_after_continuation),
       use_continuation(use_continuation),
       distort_mesh(distort_mesh),
       fe_degree(fe_degree),
@@ -796,7 +793,8 @@ namespace coanda
     relevant_partitioning[0] = locally_relevant_dofs.get_view(0, dof_u);
     relevant_partitioning[1] = locally_relevant_dofs.get_view(dof_u, dof_u + dof_p);
     
-    pcout << "   Number of active fluid cells: " << triangulation.n_global_active_cells() << std::endl << "   Number of degrees of freedom: " << dof_handler.n_dofs() << " (" << dof_u << '+' << dof_p << ')' << std::endl;
+    pcout << "---" << "Number of active fluid cells: " << triangulation.n_global_active_cells() << std::endl;
+    pcout << "---" << "Number of degrees of freedom: " << dof_handler.n_dofs() << " (" << dof_u << '+' << dof_p << ")" << std::endl;
 
     const FEValuesExtractors::Vector velocities(0);
 
@@ -1290,7 +1288,7 @@ namespace coanda
 // -------------------- REFINE MESH --------------------
 
   template <int dim>
-  void NS<dim>::refine_mesh(const unsigned int min_grid_level, const unsigned int max_grid_level)
+  void NS<dim>::refine_mesh(const unsigned int min_grid_level, const unsigned int max_grid_level, const bool is_before_time_stepping)
   {
     TimerOutput::Scope timer_section(timer, "Refine mesh");
     pcout << "Refining mesh..." << std::endl;
@@ -1299,8 +1297,27 @@ namespace coanda
     Vector<float> estimated_error_per_cell(triangulation.n_active_cells());
     const FEValuesExtractors::Vector velocity(0);
 
-    KellyErrorEstimator<dim>::estimate(dof_handler, face_quad_formula, {}, present_solution, estimated_error_per_cell, fe.component_mask(velocity));
-    parallel::distributed::GridRefinement::refine_and_coarsen_fixed_fraction(triangulation, estimated_error_per_cell, 0.6, 0.4);
+    if (!is_before_time_stepping)
+      KellyErrorEstimator<dim>::estimate(
+                                        dof_handler,
+                                        face_quad_formula,
+                                        {},
+                                        present_solution,
+                                        estimated_error_per_cell,
+                                        fe.component_mask(velocity)
+                                        );
+    else
+      KellyErrorEstimator<dim>::estimate(
+                                        dof_handler,
+                                        face_quad_formula,
+                                        {},
+                                        steady_solution,
+                                        estimated_error_per_cell,
+                                        fe.component_mask(velocity)
+                                        );
+    
+
+    parallel::distributed::GridRefinement::refine_and_coarsen_fixed_fraction(triangulation, estimated_error_per_cell, 0.55, 0.45);
     
 
     if (triangulation.n_levels() > max_grid_level)
@@ -1374,7 +1391,7 @@ namespace coanda
     for (double mu = viscosity_begin_continuation; mu >= target_viscosity; mu -= continuation_step_size)
     {
       viscosity = mu;
-      pcout << "-------------------- Searching for initial guess with mu = " << mu << "--------------------" << std::endl;
+      pcout << std::string(20, '-') << " Searching for initial guess with mu = " << mu << " " << std::string(20, '-') << std::endl;
 
       newton_iteration(steady_solution, tol, n_max_iter, is_initial_step, steady_system);
       
@@ -1385,6 +1402,10 @@ namespace coanda
     }
 
     viscosity = target_viscosity;
+
+    if (adaptive_refinement_after_continuation)
+      refine_mesh(0, 2, adaptive_refinement_after_continuation); // if it is true, we can pass it as is_before_time_stepping=true
+
   }
 
 
@@ -1422,14 +1443,13 @@ namespace coanda
 
     while ((time.end() - time.current() > 1e-12) && (!should_stop)) 
     {
-
-      if (time.get_timestep() == 0)
+      if (time.get_timestep() == 0 && !use_continuation)
         output_results(0, false);
 
       time.increment();
       std::cout.precision(6);
       std::cout.width(12);
-      pcout << std::string(96, '*') << std::endl << "Time step = " << time.get_timestep() << ", at t = " << std::scientific << time.current() << std::endl;
+      pcout << std::string(20, '-') << " Time step = " << time.get_timestep() << ", at t = " << std::scientific << time.current() << " " << std::string(20, '-') << std::endl;
       
       const bool steady_system{false};
       const double nonlinear_tolerance(1e-9);
@@ -1453,6 +1473,7 @@ namespace coanda
       if (norm_increment < stopping_criterion)
         should_stop = true;
       pcout << " The relative distance between the two iterations is " << norm_increment << std::endl;
+
       relative_distances.push_back(norm_increment);
 
       old_solution.reinit(owned_partitioning, mpi_communicator);
@@ -1467,6 +1488,7 @@ namespace coanda
         output_results(time.get_timestep(), output_steady_solution);
       }
 
+      // Refinement
       if (time.time_to_refine())
       {
         if (adaptive_refinement) 
@@ -1476,6 +1498,7 @@ namespace coanda
 
     const std::string filename1{"residual_first_iteration.csv"};
     const std::string filename2{"relative_distances.csv"};
+
     save_vector(residuals_at_first_iteration, filename1);
     save_vector(relative_distances, filename2);
   }
@@ -1491,42 +1514,47 @@ int main(int argc, char *argv[])
 {
   try
   {
+
     using namespace dealii;
     using namespace coanda;
 
+
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
+
     
     const double theta{0.5}; // using the trapezoidal rule to integrate in time
-
     const bool adaptive_refinement{true};
+    const bool adaptive_refinement_after_continuation{true};
 
-    const bool use_continuation{true};
+
+    const bool use_continuation{false};
     const bool distort_mesh{false};
 
+
     const unsigned int fe_degree{1};
-
-    const double stopping_criterion{1e-30};
-
+    const double stopping_criterion{1e-12};
     const unsigned int n_glob_ref{1};
 
-    const unsigned int jacobian_update_step{4};
 
+    const unsigned int jacobian_update_step{4};
     const double gamma{1.0};
 
-    const double time_end{70};
+
+    const double time_end{60};
     const double delta_t{1e-2};
     const double output_interval{1e-1};
     const double refinement_interval{1e-1};
 
+
     const double viscosity{0.5};
-    
-    const double viscosity_begin_continuation{2.0};
+    const double viscosity_begin_continuation{0.51};
     const double continuation_step_size{1e-2};
     
 
     NS<2> bifurc_NS{
                     theta,
                     adaptive_refinement,
+                    adaptive_refinement_after_continuation,
                     use_continuation,
                     distort_mesh,
                     fe_degree,
@@ -1545,20 +1573,26 @@ int main(int argc, char *argv[])
 
 
     bifurc_NS.run();
+
   }
+
 
   catch (std::exception &exc)
   {
-    std::cerr << std::endl << std::endl << "----------------------------------------------------" << std::endl;
-    std::cerr << "Exception on processing: " << std::endl << exc.what() << std::endl << "Aborting!" << std::endl << "----------------------------------------------------" << std::endl;
+    std::cerr << std::endl << std::endl << std::string(50, '-') << std::endl;
+    std::cerr << "Exception on processing: " << std::endl << exc.what()
+              << std::endl << "Aborting!" << std::endl << std::string(50, '-') << std::endl;
     return 1;
   }
+  
 
   catch (...)
   {
-    std::cerr << std::endl << std::endl << "----------------------------------------------------" << std::endl;
-    std::cerr << "Unknown exception!" << std::endl << "Aborting!" << std::endl << "----------------------------------------------------" << std::endl;
+    std::cerr << std::endl << std::endl << std::string(50, '-') << std::endl;
+    std::cerr << "Unknown exception!" << std::endl << "Aborting!" << std::endl << std::string(50, '-') << std::endl;
     return 1;
   }
+
+
   return 0;
 }

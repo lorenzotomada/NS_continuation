@@ -1,7 +1,8 @@
 /* -----------------------------------------------------------------------------
  TODO:
-    0) Find a decent solver for the preconditioner in the steady case (move MUMPS as class attribute)
-      0.1) Maybe check the current time step and in case do not update the Jacobian even at the second time step  
+    0) Minimal changes
+      0.1) Better preconditioner for SIMPLE
+      0.2) Mesh refinement separately for the steady and unsteady case
     1) Perform tests
       1.1) Find the steady, stable solution
       1.2) Without mesh refinement, symmetrical mesh
@@ -13,9 +14,6 @@
       1.8) Refine the mesh according to the steady system and use it as fixed mesh for time stepping
     2) Explain some details
       2.1) Why there is not a separate function for mesh-depending matrix and other components
-      2.2) Why no trapezoidal rule
-      2.3) Why need to keep first_iteration
-      2.4) Why two preconditioners are used 
 * ------------------------------------------------------------------------------ */
 
 
@@ -33,16 +31,16 @@
 #include <deal.II/lac/dynamic_sparsity_pattern.h>
 #include <deal.II/lac/full_matrix.h>
 #include <deal.II/lac/precondition.h>
-#include <deal.II/lac/sparsity_tools.h>
 #include <deal.II/lac/solver_control.h>
 #include <deal.II/lac/solver_gmres.h>
+#include <deal.II/lac/sparsity_tools.h>
 
 
 #include <deal.II/lac/petsc_block_sparse_matrix.h>
-#include <deal.II/lac/petsc_sparse_matrix.h>
-#include <deal.II/lac/petsc_vector.h>
-#include <deal.II/lac/petsc_precondition.h>
 #include <deal.II/lac/petsc_solver.h>
+#include <deal.II/lac/petsc_sparse_matrix.h>
+#include <deal.II/lac/petsc_precondition.h>
+#include <deal.II/lac/petsc_vector.h>
 
 
 #include <deal.II/grid/grid_generator.h>
@@ -77,10 +75,10 @@
 #include <deal.II/distributed/tria.h>
 
 
-#include <vector>
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <vector>
 
 
 
@@ -454,6 +452,9 @@ namespace coanda
   
     const SmartPointer<const PETScWrappers::MPI::BlockSparseMatrix> jacobian_matrix;
     const SmartPointer<PETScWrappers::MPI::SparseMatrix> pressure_mass_matrix;
+
+    SolverControl tmp_solver_control;
+    mutable PETScWrappers::SparseDirectMUMPS A_solver;
   };
   
 
@@ -471,7 +472,9 @@ namespace coanda
       gamma(gamma),
       viscosity(viscosity),
       jacobian_matrix(&jacobian_matrix),
-      pressure_mass_matrix(&pressure_mass_matrix)
+      pressure_mass_matrix(&pressure_mass_matrix),
+      tmp_solver_control(this->jacobian_matrix->block(0,0).m(), 1e-6),
+      A_solver(tmp_solver_control, (this->jacobian_matrix->block(0,0)).get_mpi_communicator())
   {}
 
 
@@ -498,19 +501,13 @@ namespace coanda
     }
 
     {
-      TimerOutput::Scope timer_section(timer, "GMRES for A");
+      TimerOutput::Scope timer_section(timer, "MUMPS for A");
       
       jacobian_matrix->block(0, 1).vmult(utmp, dst.block(1));
       utmp *= -1.0;
       utmp += src.block(0);
-
-      SolverControl A_control(src.block(0).size(), 1e-3 * utmp.l2_norm());
-      PETScWrappers::SolverGMRES A_solver(A_control, (jacobian_matrix->block(0,0)).get_mpi_communicator());
-
-      PETScWrappers::PreconditionNone A_preconditioner/*(jacobian_matrix->block(0,0).get_mpi_communicator(), PETScWrappers::PreconditionBoomerAMG::AdditionalData{})*/;
-      A_preconditioner.initialize(jacobian_matrix->block(0,0));
-
-      A_solver.solve(jacobian_matrix->block(0,0), dst.block(0), utmp, A_preconditioner);
+      
+      A_solver.solve(jacobian_matrix->block(0,0), dst.block(0), utmp);
     }
   }
 
@@ -1177,7 +1174,7 @@ namespace coanda
           evaluation_points = dst;
 
         // We do not update the Jacobian at each iteration to reduce the cost
-        if (line_search_n % jacobian_update_step == 0 || line_search_n < 2)
+        if (line_search_n % jacobian_update_step == 0 || (line_search_n < 2 && time.get_timestep()<15))
           assemble_system(first_iteration, steady_system);
         else
           assemble_rhs(first_iteration, steady_system);
@@ -1377,7 +1374,7 @@ namespace coanda
     for (double mu = viscosity_begin_continuation; mu >= target_viscosity; mu -= continuation_step_size)
     {
       viscosity = mu;
-      pcout << "Searching for initial guess with mu = " << mu << std::endl;
+      pcout << "-------------------- Searching for initial guess with mu = " << mu << "--------------------" << std::endl;
 
       newton_iteration(steady_solution, tol, n_max_iter, is_initial_step, steady_system);
       
@@ -1435,7 +1432,10 @@ namespace coanda
       pcout << std::string(96, '*') << std::endl << "Time step = " << time.get_timestep() << ", at t = " << std::scientific << time.current() << std::endl;
       
       const bool steady_system{false};
-      newton_iteration(present_solution, 1e-10, 50, first_iteration, steady_system);
+      const double nonlinear_tolerance(1e-9);
+      const unsigned max_iterations{50};
+
+      newton_iteration(present_solution, nonlinear_tolerance, max_iterations, first_iteration, steady_system);
 
       double norm_increment;
 
@@ -1500,7 +1500,7 @@ int main(int argc, char *argv[])
 
     const bool adaptive_refinement{true};
 
-    const bool use_continuation{false};
+    const bool use_continuation{true};
     const bool distort_mesh{false};
 
     const unsigned int fe_degree{1};

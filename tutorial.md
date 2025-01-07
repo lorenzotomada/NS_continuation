@@ -16,16 +16,16 @@ We begin by including all the necessary files:
 #include <deal.II/lac/dynamic_sparsity_pattern.h>
 #include <deal.II/lac/full_matrix.h>
 #include <deal.II/lac/precondition.h>
-#include <deal.II/lac/sparsity_tools.h>
 #include <deal.II/lac/solver_control.h>
 #include <deal.II/lac/solver_gmres.h>
+#include <deal.II/lac/sparsity_tools.h>
 
 
 #include <deal.II/lac/petsc_block_sparse_matrix.h>
-#include <deal.II/lac/petsc_sparse_matrix.h>
-#include <deal.II/lac/petsc_vector.h>
-#include <deal.II/lac/petsc_precondition.h>
 #include <deal.II/lac/petsc_solver.h>
+#include <deal.II/lac/petsc_sparse_matrix.h>
+#include <deal.II/lac/petsc_precondition.h>
+#include <deal.II/lac/petsc_vector.h>
 
 
 #include <deal.II/grid/grid_generator.h>
@@ -60,10 +60,10 @@ We begin by including all the necessary files:
 #include <deal.II/distributed/tria.h>
 
 
-#include <vector>
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <vector>
 ```
 
 Now, we define a namespace enclosing all the code which is written (both the NS class and its helper functions):
@@ -507,6 +507,9 @@ Recall that, in addition to solving the unsteady problem, if we use the previous
 To do that, a different preconditioner with respect to SIMPLE needs to be implemented.
 
 My choice was to stick to the one presented in the `deal.II` tutorial [step 57](https://www.dealii.org/current/doxygen/deal.II/step_57.html), modifying it in order to make it compatible with execution using MPI.
+
+However, since a direct solver is used for the $\tilde{A}$ matrix (specifically, PETSc MUMPs), there might be no advantages using parallelization.
+The choice to use a direct solver (in line with what was done in step 57) stems from the difficulty to find good preconditioners for the system, as well as from the fact that for small systems (as in this case, consisting in 10.000-20.000) DOFs the performance gain using an iterative solver and MPI is often negligible, if present.
 
 Since no other novelties with respect to step 57 are introduced, no further comments are provided on this topic, and we refer the interested reader to the aforementioned tutorial and the references therein.
 
@@ -1317,7 +1320,7 @@ Now we compress the matrices and the RHS. In the case of the steady system, we a
           evaluation_points = dst;
 
         // We do not update the Jacobian at each iteration to reduce the cost
-        if (line_search_n % jacobian_update_step == 0 || line_search_n < 2)
+        if (line_search_n % jacobian_update_step == 0 || (line_search_n < 2 && time.get_timestep()<15))
           assemble_system(first_iteration, steady_system);
         else
           assemble_rhs(first_iteration, steady_system);

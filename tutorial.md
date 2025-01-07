@@ -1,5 +1,6 @@
 
-We begin by including the usual files:
+# Utilities
+We begin by including all the necessary files:
 
 ```cpp
 #include <deal.II/base/function.h>
@@ -63,8 +64,6 @@ We begin by including the usual files:
 #include <fstream>
 #include <iostream>
 #include <sstream>
-
-
 ```
 
 Now, we define a namespace enclosing all the code which is written (both the NS class and its helper functions):
@@ -73,11 +72,13 @@ Now, we define a namespace enclosing all the code which is written (both the NS 
 namespace coanda
 {
   using namespace dealii;
-
-
 ```
 
-The following function is needed to save the vectors which help us keeping track of the bifurcating behaviour of the solution (more on that in the following). The vectors are saved in .csv format.
+Now we define a few helpers which are going to be needed in the NS class.
+
+
+The following function is needed to save the vectors which help us keeping track of the bifurcating behaviour of the solution (more on that in the following).
+The vectors are saved in .csv format.
 
 
 ```cpp
@@ -98,15 +99,16 @@ The following function is needed to save the vectors which help us keeping track
       out.close();
     }
 
-    catch (const std::exception& e) { std::cerr << "It was not possible to save the vector to a file named " << filename << ". Error: " << e.what() << std::endl; }
+    catch (const std::exception& e)
+    {
+      std::cerr << "It was not possible to save the vector to a file named " << filename << ". Error: " << e.what() << std::endl;
+    }
   }
-
-
 ```
-
+## Time class and utilities
 We define the `Time` class, which carries out the following tasks:
   - keep track of the current time 
-  - define the time $T_{\mathrm{end}}$
+  - define the time $T_{\text{end}}$
   - save the time stepsize $\Delta t$ (assumed to be constant)
   - specify whether the current time is marked for saving the solution
   - specify whether the current time is marked for mesh refinement
@@ -123,7 +125,6 @@ We define the `Time` class, which carries out the following tasks:
         output_interval(output_interval),
         refinement_interval(refinement_interval)
     {}
-
 ```
 
 The following functions are pretty self-explanatory and are not commented in detail.
@@ -178,13 +179,10 @@ The following functions are pretty self-explanatory and are not commented in det
     time_current += delta_t;
     ++timestep;
   }
-
-
-
 ```
 
+## Boundary conditions
 The following function will be used to define the boundary conditions. 
-Recall that 
 
 ```cpp
   template <int dim>
@@ -198,14 +196,32 @@ Recall that
 
 
 ```
-The boundary values function is defined as follows. Both in $2$D and in $3$D its values can be different from $0$ only in the inlet part of the boundary $\Gamma_{\mathrm{inlet}}$.
+The boundary values function is defined as follows. Both in 2D and in 3D its values can be different from $0$ only in the inlet part of the boundary $\Gamma_{\text{inlet}}$.
 
-In order to ensure continuity of the boundary conditions, 
+In order to ensure continuity of the boundary conditions, a parabolic inflow condition is imposed in 2D, and here I made the choice to impose a 4-th degree inflow condition in 3D.
 
+In both cases, it is done in such a way that the boundary values function vanishes on the part of the boundary which is shared among the inlet and the walls.
+
+In 2D, in particular, we have that 
+$$
+	\boldsymbol{u}_{\text{inlet}}(x, y, t) =
+	\begin{bmatrix}
+		20(y - 2.5)(5 - y) \\
+		0
+	\end{bmatrix},
+$$
+
+while in 3D we have 
+$$
+	\boldsymbol{u}_{\text{inlet}}(x, y, z, t) =
+	\begin{bmatrix}
+		20(y - 2.5)(5 - y)(z-2.5)(5-z) \\
+		0 \\
+        0
+	\end{bmatrix}.
+$$
 
 ```cpp
-
-  
   template <int dim>
   double BoundaryValues<dim>::value(const Point<dim> &p, const unsigned int component) const
   {
@@ -217,13 +233,11 @@ In order to ensure continuity of the boundary conditions,
     {
       double p1{p[1]};
       double value{20*(p1-2.5)*(5-p1)};
-      if (dim == 3)
+
+      if constexpr (dim == 3) // using if constexpr because this will be known at compile-time
       {
         double p2{p[2]};
         value*=((p2-2.5)*(5-p2));
-        double normalization_constant{0.5}; /* to leave the Reynolds number unchanged.
-                                      The max inlet velocities doubles, so we need to rescale */
-        value*=normalization_constant;
       }
       return value;
     }
@@ -231,21 +245,54 @@ In order to ensure continuity of the boundary conditions,
     return 0;
   }
 
+```
+## Preconditioners
 
+To help solving the linear system needed for Newton's method, we need good preconditioners.
 
-/* The SIMPLE preconditioner (which is implemented in the following) is largely based on its implementation in lifex-cfd
- * (see https://gitlab.com/lifex/lifex-cfd/-/tree/main/source/helpers ).
- * The only things which is changed here is that I got rid on the dependence of the implementation on other lifex helper functions. */ 
+For the unsteady Navier-Stokes equations, a good preconditioner is needed.
+Here, we consider the e _Semi-Implicit Method for Pressure Linked Equations_ (SIMPLE), which can be seen as associated to a preconditioner. 
 
+Its implementation in the following is largely based on the one available in [$\text{life}^\text{x}\text{cfd}$](https://gitlab.com/lifex/lifex-cfd/-/tree/main/source/helpers), for which we also refer the interested reader for further references.
+The only thing which is altered here is that I got rid on the dependence of SIMPLE on other $\text{life}^\text{x}$ helper functions.
 
+For completeness, a defintion of the SIMPLE preconditioner is provided.
+Recall that the matrix resulting from a discretization of the Navier-Stokes equations can be expressed as follows:
+$$
+\mathcal{J} = \begin{bmatrix} 
+F & B^T \\ 
+-B & 0 
+\end{bmatrix},
+$$
+in which $F = \frac{1}{\Delta t} M + A + C(\mathbf{U}^n)$, and $C(\mathbf{U}^n)$ is given by the (linearized) convection terms of
+the momentum equation.
 
-// -------------------- SCHUR COMPLEMENT SPARSITY --------------------
+The SIMPLE preconditioner is defined as:
+$$
+P_\mathrm{SIMPLE} = \begin{bmatrix} 
+F & S \\ 
+-B & \widetilde{\Sigma} 
+\end{bmatrix} 
+\begin{bmatrix} 
+I & D^{-1}B^T \\ 
+0 & I 
+\end{bmatrix},
+$$
+in which $D = \mathrm{diag}(F)$ is a diagonal matrix obtained from the diagonal entries of $F$, and $\widetilde{\Sigma} = S + B\,D^{-1}\,B^T$ is an approximation of the Schur complement.
+In this approximation, replacing $F^{-1}$ with $D^{-1}$ allows explicit assembly of the matrix.
 
+To use the preconditioner, it is necessary to compute the application of its inverse to a vector, that is, $P_\mathrm{SIMPLE}^{-1} \mathbf{x}$.
+This operation, in turn, requires computing the inverses of $F$ and $\widetilde{\Sigma}$.
+
+To do so, $F$ and $\widetilde{\Sigma}$ are approximated, and we refere to the method obtained in this way as _aSIMPLE_ (approximate SIMPLE).
+
+---
+We begin by creating the sparsity pattern for the Schur complement matrix:
+```cpp
   inline void schur_complement_sparsity(DynamicSparsityPattern &dst, const PETScWrappers::MPI::BlockSparseMatrix &src)
   {
     PETScWrappers::MPI::SparseMatrix tmp_mat;
     src.block(1, 0).mmult(tmp_mat, src.block(0, 1));
-    //dst.reinit(tmp_mat.m(), tmp_mat.n());
 
     for (const auto &row : tmp_mat.locally_owned_range_indices())
     {
@@ -260,12 +307,14 @@ In order to ensure continuity of the boundary conditions,
         dst.add(entry->row(), entry->column());
     }
   }
-
-
-
-// -------------------- SCHUR COMPLEMENT --------------------
-
-  inline void schur_complement(PETScWrappers::MPI::SparseMatrix &dst, const PETScWrappers::MPI::BlockSparseMatrix &src, const PETScWrappers::MPI::Vector &diag_A00_inverse)
+```
+We can then compute the Schur complement:
+```cpp
+  inline void schur_complement(
+                               PETScWrappers::MPI::SparseMatrix &dst,
+                               const PETScWrappers::MPI::BlockSparseMatrix &src,
+                               const PETScWrappers::MPI::Vector &diag_A00_inverse
+                               )
   {
     PETScWrappers::MPI::SparseMatrix tmp_mat;
     src.block(1, 0).mmult(tmp_mat, src.block(0, 1), diag_A00_inverse);
@@ -273,11 +322,9 @@ In order to ensure continuity of the boundary conditions,
     dst.add(1.0, tmp_mat);
     dst.add(-1.0, src.block(1, 1));
   }
-
-
-
-// -------------------- SIMPLE PRECONDITIONER --------------------
-
+```
+The following class is a declaration of the SIMPLE preconditioner:
+```cpp
   class SIMPLE : public Subscriptor
   {
     public:
@@ -289,39 +336,43 @@ In order to ensure continuity of the boundary conditions,
           const PETScWrappers::MPI::BlockSparseMatrix &jacobian_matrix
     );
 
-
+    
+    // class methods
     void initialize_schur();
     void initialize();
     void assemble();
+
 
     void vmult(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const
     {
       vmult_L(tmp, src);
       vmult_U(dst, tmp);
     }
-  
+
+
+
     private:
     void vmult_L(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const;
     void vmult_U(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const;
 
 
+
+    // class attributes
     MPI_Comm mpi_communicator;
     TimerOutput &timer;
 
     const std::vector<IndexSet> &owned_partitioning;
     const std::vector<IndexSet> &relevant_partitioning;
 
-    const SmartPointer<const PETScWrappers::MPI::BlockSparseMatrix> jacobian_matrix;
+    const SmartPointer<const PETScWrappers::MPI::BlockSparseMatrix> jacobian_matrix; // pointer to the system matrix
     PETScWrappers::MPI::SparseMatrix approximate_schur;
 
     mutable PETScWrappers::MPI::BlockVector tmp;
     PETScWrappers::MPI::Vector diag_F_inv;
   };
-
-
-
-// --------------------- SIMPLE::CONSTRUCTOR ---------------------
-
+```
+The constructor just initializes a temporary vector which is going to be needed in the following.
+```cpp
   SIMPLE::SIMPLE(MPI_Comm mpi_communicator,
                 TimerOutput &timer,
                 const std::vector<IndexSet> &owned_partitioning,
@@ -335,10 +386,10 @@ In order to ensure continuity of the boundary conditions,
   { 
     tmp.reinit(owned_partitioning, mpi_communicator);
   }
-
-
-
-// --------------------- INITIALIZE SCHUR ---------------------
+```
+The following functions are needed to initialize and assemble the Schur complement and `diag_F_inv`:
+```cpp
+  // initialize_schur
 
   void SIMPLE::initialize_schur()
   {
@@ -351,7 +402,7 @@ In order to ensure continuity of the boundary conditions,
 
 
 
-// -------------------- INITIALIZE --------------------
+  // initialize
 
   void SIMPLE::initialize()
   {
@@ -363,7 +414,7 @@ In order to ensure continuity of the boundary conditions,
 
 
 
-// --------------------- ASSEMBLE ---------------------
+  // assemble
 
   void SIMPLE::assemble()
   {
@@ -386,52 +437,54 @@ In order to ensure continuity of the boundary conditions,
 
     schur_complement(approximate_schur, (*jacobian_matrix), diag_F_inv);
   }
-
-
-
-// --------------------- VMULT_L ---------------------
+```
+The following functions are the ones needed to implement `vmult`, i.e. multiplication left and right multiplication.
+```cpp
+  // vmult_l
 
   void SIMPLE::vmult_L(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const
   {
     TimerOutput::Scope timer_section(timer, "GMRES for preconditioner");
 
+
     SolverControl F_inv_control((*jacobian_matrix).block(0, 0).m(), 1e-4 * src.block(0).l2_norm());
     PETScWrappers::SolverGMRES F_solver(F_inv_control, jacobian_matrix->get_mpi_communicator());
+
 
     PETScWrappers::PreconditionBoomerAMG F_inv_preconditioner(mpi_communicator, PETScWrappers::PreconditionBoomerAMG::AdditionalData{});
     F_inv_preconditioner.initialize(jacobian_matrix->block(0, 0));
 
     F_solver.solve((*jacobian_matrix).block(0, 0), dst.block(0), src.block(0), F_inv_preconditioner); // d0 = F^{-1} * s0
-
     (*jacobian_matrix).block(1, 0).vmult(tmp.block(1), dst.block(0)); // t1 = (-B) * d0
+
 
     tmp.block(1).add(-1.0, src.block(1)); // t1 -= s1
     SolverControl Schur_inv_control(approximate_schur.m(), 1e-4 * tmp.block(1).l2_norm());
     PETScWrappers::SolverGMRES Schur_solver(Schur_inv_control, mpi_communicator);
 
+
     PETScWrappers::PreconditionBoomerAMG Schur_inv_preconditioner(mpi_communicator, PETScWrappers::PreconditionBoomerAMG::AdditionalData{});
     Schur_inv_preconditioner.initialize(approximate_schur);
 
+
+    // Schur_solver.solve(approximate_schur, dst.block(1), tmp.block(1), Schur_inv_preconditioner); // d1 = (-Sigma^{-1}) * t1
+    // this throws an error: the initial guess can't be empty
+    
     PETScWrappers::MPI::Vector solution(dst.block(1));
-
     solution = 0.0;
-    Schur_solver.solve(approximate_schur, solution, tmp.block(1), Schur_inv_preconditioner); // d1 = (-Sigma^{-1}) * t1
 
+    Schur_solver.solve(approximate_schur, solution, tmp.block(1), Schur_inv_preconditioner); // d1 = (-Sigma^{-1}) * t1
     dst.block(1) = solution;
 
-    //Schur_solver.solve(approximate_schur, dst.block(1), tmp.block(1), Schur_inv_preconditioner); // d1 = (-Sigma^{-1}) * t1
-    // this throws an error: the initial guess can't be empty
 
-    // In case of defective flow BC treatment the Navier-Stokes system matrix
-    // has an extra block associated with the Lagrange multipliers (n_blocks=3).
-    // Thus, in case of defective flow BCs we add an extra identity block.
+    // In case of defective flow BC treatment:
     if (src.n_blocks() == 3) 
       dst.block(2) = src.block(2);
   }
 
 
 
-// --------------------- VMULT_U ---------------------
+  // vmult_u
 
   void SIMPLE::vmult_U(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const
   {
@@ -440,14 +493,22 @@ In order to ensure continuity of the boundary conditions,
     dst.block(0).scale(diag_F_inv); // d0 = D^{-1} * d0
     dst.block(0).sadd(-1.0, src.block(0)); // d0 = s0 - d0
 
+
     if (src.n_blocks() == 3) 
       dst.block(2) = src.block(2);
   }
 
 
+```
+Recall that, in addition to solving the unsteady problem, if we use the previously introduced continuation algorithm, then we also need to solve the steady Navier-Stokes equations.
 
-// --------------------- BLOCK SCHUR PRECONDITIONER ---------------------
+To do that, a different preconditioner with respect to SIMPLE needs to be implemented.
 
+My choice was to stick to the one presented in the deal.II tutorial [step 57](https://www.dealii.org/current/doxygen/deal.II/step_57.html), modifying it in order to make it compatible with execution using MPI.
+
+Since no other novelties with respect to step 57 are introduced, no further comments are provided on this topic, and we refer the interested reader to the aforementioned tutorial and the references therein.
+
+```cpp
   class BlockSchurPreconditioner : public Subscriptor
   {
     public:
@@ -471,7 +532,7 @@ In order to ensure continuity of the boundary conditions,
   
 
 
-// -------------------- BLOCK SCHUR PRECONDITIONER CONSTRUCTOR --------------------
+  // Constructor
 
   BlockSchurPreconditioner::BlockSchurPreconditioner(
                                                     TimerOutput &timer,
@@ -489,7 +550,7 @@ In order to ensure continuity of the boundary conditions,
 
 
 
-// -------------------- BLOCK SCHUR PRECONDITIONER VMULT --------------------
+  // vmult
 
   void BlockSchurPreconditioner::vmult(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const
   {
@@ -520,17 +581,35 @@ In order to ensure continuity of the boundary conditions,
       SolverControl A_control(src.block(0).size(), 1e-3 * utmp.l2_norm());
       PETScWrappers::SolverGMRES A_solver(A_control, (jacobian_matrix->block(0,0)).get_mpi_communicator());
 
-      PETScWrappers::PreconditionNone A_preconditioner/*(jacobian_matrix->block(0,0).get_mpi_communicator(), PETScWrappers::PreconditionBoomerAMG::AdditionalData{})*/;
+      PETScWrappers::PreconditionNone A_preconditioner;
       A_preconditioner.initialize(jacobian_matrix->block(0,0));
 
       A_solver.solve(jacobian_matrix->block(0,0), dst.block(0), utmp, A_preconditioner);
     }
   }
+```
+---
+# The NS (Navier-Stokes) class
+
+This is the declaration of the Navier-Stokes class.
+
+The constructor takes many inputs:
+- `theta` is the parameter $\theta$ of the $\theta$-method, and it is here chosen as $\frac{1}{2}$, due to the fact that the trapezoidal rule is the only $\theta$-method$ with order to (and it is also A-stable);
+- `adaptive_refinement` is a flag which specifies whether the mesh should be refined adaptively or not;
+- `use_continuation` is a flag which specifies whether the continuation algorithm should be used;
+- `distort_mesh` is a flag which specifies whether mesh should be distorder (see [step 49](https://www.dealii.org/current/doxygen/deal.II/step_49.html)), which in many situations can be crucial in order to observe the bifurcating behaviour of the solution;
+- `fe_degree` is the degree used for the pressure space. Since we are using Taylor-Hood pairs, the degree used for the velocity one is going to be `fe_degree` $+1$;
+-`stopping_criterion` is the threshold $\tau$ used to check if $\frac{\|\boldsymbol{u}^{n+1}-\boldsymbol{u}^{n}\|_2}{\|\boldsymbol{u}^{n}\|_2}<\tau$;
+-`n_glob_ref` is the number of global refinement performed on the initial mesh;
+-`jacobian_update_step` is the step used for updating the Jacobian in the (quasi)-Newon method;
+-`gamma` is a stabilization paramter used in the steady case, following exactly what was done in step 57;
+-`time_end`, `delta_t`, `output_interval`, and `refinement_interval` are the inputs given to the constructor of the `Time` class;
+-`viscosity` is the value of $\mu$ for which we want to perform a simulation;
+-`viscosity_begin_continuation`, // not necessary to pass this if continuation is not used
+-`continuation_step_size` // same as in the previous line.
 
 
-
-// ------------------------------------ NS CLASS -----------------------------------
-
+```cpp
   template <int dim>
   class NS
   {
@@ -871,6 +950,7 @@ In order to ensure continuity of the boundary conditions,
     old_solution.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
     evaluation_points.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
     steady_solution.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
+
     // The following two vectors are non-ghosted, since the solver cannot work on ghosted vectors
     system_rhs.reinit(owned_partitioning, mpi_communicator);
     newton_update.reinit(owned_partitioning, mpi_communicator);
@@ -1485,13 +1565,13 @@ In order to ensure continuity of the boundary conditions,
     save_vector(relative_distances, filename2);
   }
 }
+```
+# Main function
+The main function just defines all the parameters needed by the NS constructor, instantiates a NS object, and uses the `run` method.
 
+All the relevant parameters can be read below.
 
-
-
-
-// ------------------------------- MAIN FUNCTION ------------------------------
-
+```cpp
 int main(int argc, char *argv[])
 {
   try

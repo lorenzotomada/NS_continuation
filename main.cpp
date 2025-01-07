@@ -1,7 +1,7 @@
 /* -----------------------------------------------------------------------------
  TODO:
     0) Find a decent solver for the preconditioner in the steady case (move MUMPS as class attribute)
-      0.1) Vedi quali includes puoi togliere
+      0.1) Maybe check the current time step and in case do not update the Jacobian even at the second time step  
     1) Perform tests
       1.1) Find the steady, stable solution
       1.2) Without mesh refinement, symmetrical mesh
@@ -203,13 +203,11 @@ namespace coanda
     {
       double p1{p[1]};
       double value{20*(p1-2.5)*(5-p1)};
-      if (dim == 3)
+
+      if constexpr (dim == 3)
       {
         double p2{p[2]};
         value*=((p2-2.5)*(5-p2));
-        double normalization_constant{0.5}; /* to leave the Reynolds number unchanged.
-                                      The max inlet velocities doubles, so we need to rescale */
-        value*=normalization_constant;
       }
       return value;
     }
@@ -251,7 +249,11 @@ namespace coanda
 
 // -------------------- SCHUR COMPLEMENT --------------------
 
-  inline void schur_complement(PETScWrappers::MPI::SparseMatrix &dst, const PETScWrappers::MPI::BlockSparseMatrix &src, const PETScWrappers::MPI::Vector &diag_A00_inverse)
+  inline void schur_complement(
+                              PETScWrappers::MPI::SparseMatrix &dst,
+                              const PETScWrappers::MPI::BlockSparseMatrix &src,
+                              const PETScWrappers::MPI::Vector &diag_A00_inverse
+                              )
   {
     PETScWrappers::MPI::SparseMatrix tmp_mat;
     src.block(1, 0).mmult(tmp_mat, src.block(0, 1), diag_A00_inverse);
@@ -398,15 +400,14 @@ namespace coanda
     PETScWrappers::PreconditionBoomerAMG Schur_inv_preconditioner(mpi_communicator, PETScWrappers::PreconditionBoomerAMG::AdditionalData{});
     Schur_inv_preconditioner.initialize(approximate_schur);
 
-    PETScWrappers::MPI::Vector solution(dst.block(1));
+    //Schur_solver.solve(approximate_schur, dst.block(1), tmp.block(1), Schur_inv_preconditioner); // d1 = (-Sigma^{-1}) * t1
+    // this throws an error: the initial guess can't be empty
 
+    PETScWrappers::MPI::Vector solution(dst.block(1));
     solution = 0.0;
     Schur_solver.solve(approximate_schur, solution, tmp.block(1), Schur_inv_preconditioner); // d1 = (-Sigma^{-1}) * t1
 
     dst.block(1) = solution;
-
-    //Schur_solver.solve(approximate_schur, dst.block(1), tmp.block(1), Schur_inv_preconditioner); // d1 = (-Sigma^{-1}) * t1
-    // this throws an error: the initial guess can't be empty
 
     // In case of defective flow BC treatment the Navier-Stokes system matrix
     // has an extra block associated with the Lagrange multipliers (n_blocks=3).
@@ -857,6 +858,7 @@ namespace coanda
     old_solution.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
     evaluation_points.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
     steady_solution.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
+
     // The following two vectors are non-ghosted, since the solver cannot work on ghosted vectors
     system_rhs.reinit(owned_partitioning, mpi_communicator);
     newton_update.reinit(owned_partitioning, mpi_communicator);

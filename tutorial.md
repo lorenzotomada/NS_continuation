@@ -105,7 +105,7 @@ The vectors are saved in .csv format.
     }
   }
 ```
-## Time class and utilities
+## `Time` class and utilities
 We define the `Time` class, which carries out the following tasks:
   - keep track of the current time 
   - define the time $T_{\text{end}}$
@@ -250,10 +250,11 @@ $$
 
 To help solving the linear system needed for Newton's method, we need good preconditioners.
 
+### The `SIMPLE` preconditioner
 For the unsteady Navier-Stokes equations, a good preconditioner is needed.
 Here, we consider the e _Semi-Implicit Method for Pressure Linked Equations_ (SIMPLE), which can be seen as associated to a preconditioner. 
 
-Its implementation in the following is largely based on the one available in [$\text{life}^\text{x}\text{cfd}$](https://gitlab.com/lifex/lifex-cfd/-/tree/main/source/helpers), for which we also refer the interested reader for further references.
+Its implementation in the following is largely based on the one available in [lifex-cfd](https://gitlab.com/lifex/lifex-cfd/-/tree/main/source/helpers), for which we also refer the interested reader for further references.
 The only thing which is altered here is that I got rid on the dependence of SIMPLE on other $\text{life}^\text{x}$ helper functions.
 
 For completeness, a defintion of the SIMPLE preconditioner is provided.
@@ -500,11 +501,12 @@ The following functions are the ones needed to implement `vmult`, i.e. multiplic
 
 
 ```
+### The `BlockSchurPreconditioner`
 Recall that, in addition to solving the unsteady problem, if we use the previously introduced continuation algorithm, then we also need to solve the steady Navier-Stokes equations.
 
 To do that, a different preconditioner with respect to SIMPLE needs to be implemented.
 
-My choice was to stick to the one presented in the deal.II tutorial [step 57](https://www.dealii.org/current/doxygen/deal.II/step_57.html), modifying it in order to make it compatible with execution using MPI.
+My choice was to stick to the one presented in the `deal.II` tutorial [step 57](https://www.dealii.org/current/doxygen/deal.II/step_57.html), modifying it in order to make it compatible with execution using MPI.
 
 Since no other novelties with respect to step 57 are introduced, no further comments are provided on this topic, and we refer the interested reader to the aforementioned tutorial and the references therein.
 
@@ -589,25 +591,44 @@ Since no other novelties with respect to step 57 are introduced, no further comm
   }
 ```
 ---
-# The NS (Navier-Stokes) class
+# The `NS` (Navier-Stokes) class
 
 This is the declaration of the Navier-Stokes class.
 
-The constructor takes many inputs:
+## An overview of the data to be passed to the constructor
+The constructor takes the following inputs:
 - `theta` is the parameter $\theta$ of the $\theta$-method, and it is here chosen as $\frac{1}{2}$, due to the fact that the trapezoidal rule is the only $\theta$-method$ with order to (and it is also A-stable);
 - `adaptive_refinement` is a flag which specifies whether the mesh should be refined adaptively or not;
 - `use_continuation` is a flag which specifies whether the continuation algorithm should be used;
 - `distort_mesh` is a flag which specifies whether mesh should be distorder (see [step 49](https://www.dealii.org/current/doxygen/deal.II/step_49.html)), which in many situations can be crucial in order to observe the bifurcating behaviour of the solution;
 - `fe_degree` is the degree used for the pressure space. Since we are using Taylor-Hood pairs, the degree used for the velocity one is going to be `fe_degree` $+1$;
--`stopping_criterion` is the threshold $\tau$ used to check if $\frac{\|\boldsymbol{u}^{n+1}-\boldsymbol{u}^{n}\|_2}{\|\boldsymbol{u}^{n}\|_2}<\tau$;
+-`stopping_criterion` is the threshold $\tau$ used to check if $\displaystyle\frac{\|\boldsymbol{u}^{n+1}-\boldsymbol{u}^{n}\|_2}{\|\boldsymbol{u}^{n}\|_2}<\tau$ and, in that case, stop the simulation;
 -`n_glob_ref` is the number of global refinement performed on the initial mesh;
 -`jacobian_update_step` is the step used for updating the Jacobian in the (quasi)-Newon method;
 -`gamma` is a stabilization paramter used in the steady case, following exactly what was done in step 57;
 -`time_end`, `delta_t`, `output_interval`, and `refinement_interval` are the inputs given to the constructor of the `Time` class;
 -`viscosity` is the value of $\mu$ for which we want to perform a simulation;
--`viscosity_begin_continuation`, // not necessary to pass this if continuation is not used
--`continuation_step_size` // same as in the previous line.
+-`viscosity_begin_continuation` is the (optional) parameter denoting the right-handside of the interval used for continuation;
+-`continuation_step_size` is the (optional) stepsize used for continuation.
 
+## An overview of the attributes of the class
+In addition to the inputs passed to the constructor, the class also saves the objects needed for a distributed FE solver (the triangulation, the DOF handler, a finite element system object, the sparsity pattern of the Jacobian matrix, shared pointer pointing to the preconditioners, and so on).
+
+Additionally, the pressure mass matrix is saved, as it is used by the preconditioner in the steady case.
+
+Various vectors are stored, namely:
+- `present_solution`, which holds the current solution;
+- `old_solution`, containing the solution at the previous time step;
+- `steady_solution`, containing the solution to the steady problem (not computed if continuation is not used);
+- `newton_update`, containint the update to be added to the `present_solution` at each iteration of Newton's method;
+- `evaluation_points`, used for technical reasons explained below;
+- `system_rhs`, pretty self-explanatory.
+
+Lastly, two `AffineConstraints<double>` are saved: `nonzero_constraints` is used just during the first call of Newton's method, and it imposes the correct boundary conditions on the output of the first iteration.
+After this phase, all the successive updates are equipped with zero Dirichlet boundary conditions using `zero_constraints`, meaning that their sum with a vector satisfying inhomogeneous DBCs will automatically satisfy the same DBCs.
+
+## An overview of the methods of the class
+For readability reasons, the methods of the class are going to be discussed in detail in the following, after their declaration and before their definition.
 
 ```cpp
   template <int dim>
@@ -633,9 +654,11 @@ The constructor takes many inputs:
       const double continuation_step_size=0 // same as in the previous line
       );
 
+
     void run();
 
     ~NS() { timer.print_summary(); }
+
 
 
     private:
@@ -685,7 +708,7 @@ The constructor takes many inputs:
     DoFHandler<dim> dof_handler;
 
     QGauss<dim> quad_formula;
-    QGauss<dim-1> face_quad_formula;
+    QGauss<dim-1> face_quad_formula; // needed for Kelly estimator
 
     AffineConstraints<double> zero_constraints;
     AffineConstraints<double> nonzero_constraints;
@@ -719,11 +742,11 @@ The constructor takes many inputs:
     std::vector<double> relative_distances;
     std::vector<double> residuals_at_first_iteration;
   };
-
-
-
-// -------------------- CONSTRUCTOR --------------------
-
+```
+## The constructor
+The constructor takes in input the aforementioned variables.
+Its only action is to call the `make_grid` method, which, unsurprisingly, creates the triangulation.
+```cpp
   template <int dim>
   NS<dim>::NS(
               const double theta,
@@ -758,7 +781,7 @@ The constructor takes many inputs:
       continuation_step_size(continuation_step_size),
       triangulation(mpi_communicator,
                     typename Triangulation<dim>::MeshSmoothing(Triangulation<dim>::smoothing_on_refinement |
-                    Triangulation<dim>::smoothing_on_coarsening)),
+                    Triangulation<dim>::smoothing_on_coarsening)), // to avoid ending up with 
       fe(FE_Q<dim>(fe_degree + 1), dim, FE_Q<dim>(fe_degree), 1),
       dof_handler(triangulation),
       quad_formula(fe_degree + 2),
@@ -769,22 +792,21 @@ The constructor takes many inputs:
   {
     make_grid();
   }
-
-
-
-// -------------------- CREATE THE GRID --------------------
-
+```
+## The `make_grid` method
+This method creates a triangulation covering the domain considered in this project.
+An interesting remark is that `GridGenerator::subdivided_hyper_rectangle` needed to be used instead of `GridGenerator::hyper_rectangle`, as the latter yielded cells which were too stretched.
+```cpp
   template <int dim>
   void NS<dim>::make_grid()
   {
     Triangulation<dim> rectangle;   
-   
-    /* To create the mesh, we use subdivided_hyper_rectangle instead of hyper_rectangle because
-    the latter yielded cells which were too streched. */
-
+```
+We begin by creating an initial rectangular grid, with a fixed number of cells, and refining it `n_glob_ref` times:
+```cpp
     if constexpr (dim == 2) // Checking with constexpr because it is known already at compile-time
     {
-      std::vector<unsigned int> subdivisions{45, 10};
+      std::vector<unsigned int> subdivisions{45, 10}; 
       GridGenerator::subdivided_hyper_rectangle(rectangle, subdivisions, Point<2>(0, 0), Point<2>(50, 7.5));
     }
     else
@@ -793,18 +815,23 @@ The constructor takes many inputs:
       GridGenerator::subdivided_hyper_rectangle(rectangle, subdivisions, Point<3>(0, 0, 0), Point<3>(50, 7.5, 7.5));
     }
     
-    if (n_glob_ref > 0) { rectangle.refine_global(n_glob_ref); } // explain why it is here
 
+    if (n_glob_ref > 0) { rectangle.refine_global(n_glob_ref); }
+```
+Afterwards, we remove the cells which cover areas (or volumes) not belonging to the geometry we are interested in:
+```cpp
     std::set<typename Triangulation<dim>::active_cell_iterator> cells_to_remove;
     bool inside_domain{true};
     for (const auto &cell : rectangle.active_cell_iterators())
     {
       inside_domain = true;
+
       for (unsigned int v = 0; v < GeometryInfo<dim>::vertices_per_cell; ++v)
       {
         bool before_10_x_coord{cell->vertex(v)[0]<10};
         double v1{cell->vertex(v)[1]};
         bool first_check{(v1 > 5.0 && v1 < 7.5) || (v1 < 2.5)};
+
         if constexpr (dim == 2) 
         { 
           if (before_10_x_coord && first_check)
@@ -816,28 +843,31 @@ The constructor takes many inputs:
         {
           double v2{cell->vertex(v)[2]};
           bool second_check{(v2 > 5.0 && v2 < 7.5) || (v2 < 2.5)};
-          if (before_10_x_coord && (first_check || second_check)) { inside_domain = false; }
+
+          if (before_10_x_coord && (first_check || second_check))
+            inside_domain = false;
         }
       }
-      if (!inside_domain) { cells_to_remove.insert(cell); }
-    }
 
+      if (!inside_domain)
+        cells_to_remove.insert(cell);
+    }
+```
+We create a triangulation with the removed cells, and we assign a label to each portion of the boundrary (inlet, no-slip, and outflow)
+```cpp
     GridGenerator::create_triangulation_with_removed_cells(rectangle, cells_to_remove, triangulation);
+
 
     for (const auto &face : triangulation.active_face_iterators()) {
       if (face->at_boundary())
       {
         double face_center{face->center()[0]};
         if (std::fabs(face_center) < 1e-12)
-        {
           face->set_boundary_id(1); // Inlet boundary
-        }
         else
         {
           if (std::fabs(face_center - 50.0) < 1e-12)
-          {
             face->set_boundary_id(2); // Outer boundary
-          }
           else
           {
             face->set_boundary_id(3); // Wall boundary
@@ -845,18 +875,20 @@ The constructor takes many inputs:
         }
       }
     }
-
+```
+If needed, we distort the mesh, and then we save it to output.
+```cpp
     if (distort_mesh) { GridTools::distort_random(0.05, triangulation, true); }
 
     std::ofstream out("mesh.vtk");
     GridOut grid_out;
     grid_out.write_vtk(triangulation, out);
   }
-
-
-
-// ------------------------------ SETUP DOFS ------------------------------
-
+```
+## `setup_dofs` and `setup_system`
+These two functions have the goal of setting up the dofs and the system (i.e. by creating a sparsity pattern object).
+While they are mostly based on step 57, some modifications based on the [unsteady Navier-Stokes script](https://www.dealii.org/current/doxygen/deal.II/code_gallery_time_dependent_navier_stokes.html) in the `deal.II` code gallery are introduced in order to ensure that the code can run in parallel.
+```cpp
   template <int dim>
   void NS<dim>::setup_dofs()
   {
@@ -865,37 +897,44 @@ The constructor takes many inputs:
     preconditioner.reset();
     steady_preconditioner.reset();
 
+
     dof_handler.distribute_dofs(fe);
+
 
     std::vector<unsigned int> block_component(dim + 1, 0);
     block_component[dim] = 1;
     DoFRenumbering::component_wise(dof_handler, block_component);
 
+
     dofs_per_block = DoFTools::count_dofs_per_fe_block(dof_handler, block_component);
     unsigned int dof_u = dofs_per_block[0];
     unsigned int dof_p = dofs_per_block[1];
+
 
     owned_partitioning.resize(2);
     owned_partitioning[0] = dof_handler.locally_owned_dofs().get_view(0, dof_u);
     owned_partitioning[1] = dof_handler.locally_owned_dofs().get_view(dof_u, dof_u + dof_p);
     locally_relevant_dofs = DoFTools::extract_locally_relevant_dofs(dof_handler);
 
+
     relevant_partitioning.resize(2);
     relevant_partitioning[0] = locally_relevant_dofs.get_view(0, dof_u);
     relevant_partitioning[1] = locally_relevant_dofs.get_view(dof_u, dof_u + dof_p);
+
     
     pcout << "   Number of active fluid cells: " << triangulation.n_global_active_cells() << std::endl << "   Number of degrees of freedom: " << dof_handler.n_dofs() << " (" << dof_u << '+' << dof_p << ')' << std::endl;
 
-    const FEValuesExtractors::Vector velocities(0);
 
+    const FEValuesExtractors::Vector velocities(0);
     {
       nonzero_constraints.clear();
       zero_constraints.clear();
 
       nonzero_constraints.reinit(locally_relevant_dofs);
       zero_constraints.reinit(locally_relevant_dofs);
-
-      // Apply Dirichlet boundary conditions on all Dirichlet boundaries except for the outlet.
+```
+We apply the boundary conditions on all the Dirichlet boundaries (i.e. except for the outlet):
+```cpp
       std::vector<unsigned int> dirichlet_bc_ids{1, 3};
 
       for (auto id : dirichlet_bc_ids)
@@ -917,8 +956,10 @@ The constructor takes many inputs:
                                                 );
       }
 
+
       DoFTools::make_hanging_node_constraints(dof_handler, nonzero_constraints);
       DoFTools::make_hanging_node_constraints(dof_handler, zero_constraints);
+
 
       nonzero_constraints.close();
       zero_constraints.close();
@@ -927,7 +968,7 @@ The constructor takes many inputs:
 
   
   
-// --------------------- SETUP SYSTEM ---------------------
+  // setup_system
   
   template <int dim>
   void NS<dim>::setup_system()
@@ -936,6 +977,7 @@ The constructor takes many inputs:
     DoFTools::make_sparsity_pattern(dof_handler, dsp, nonzero_constraints);
     sparsity_pattern.copy_from(dsp);
 
+
     SparsityTools::distribute_sparsity_pattern(
                                               dsp,
                                               dof_handler.locally_owned_dofs(),
@@ -943,6 +985,7 @@ The constructor takes many inputs:
                                               locally_relevant_dofs
                                               );
       
+
     jacobian_matrix.reinit(owned_partitioning, dsp, mpi_communicator);
     pressure_mass_matrix.reinit(owned_partitioning[1], dsp.block(1, 1), mpi_communicator);
 
@@ -950,28 +993,36 @@ The constructor takes many inputs:
     old_solution.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
     evaluation_points.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
     steady_solution.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
-
-    // The following two vectors are non-ghosted, since the solver cannot work on ghosted vectors
+```
+Remark that the two following vectors are non-ghosted, as they need to be passed to the linear solver:
+```cpp
     system_rhs.reinit(owned_partitioning, mpi_communicator);
     newton_update.reinit(owned_partitioning, mpi_communicator);
   }
+```
+## `assemble_jacobian`
+This is a crucial method in the `NS` class, with the aim to assemble the Jacobian matrix and the system right-handside.
 
-
-
-// -------------------- ASSEMBLE THE JACOBIAN --------------------
-
+It takes the following arguments:
+-`first_iteration`, which specifies whether the current iteration of Newton's method is the first one. In that case, inhomogeneous DBCs are imposed. Else, homogeneous ones are used;
+-`assemble_jacobian`, which is a boolean. Due to the fact that it is not always necessary to assemble the matrix, we might want to assemble the right-handside only. This is the case, e.g., when we need to compute the nonlinear residual, which is done by taking the norm of the right-handside only;
+-`steady_system`, specifying whether we need to assemble the matrix and right-handside corresponding to the steady system. If false, the ones corresponding to the unsteady system are built.
+```cpp
   template <int dim>
   void NS<dim>::assemble(const bool first_iteration, const bool assemble_jacobian, const bool steady_system)
   {
     TimerOutput::Scope timer_section(timer, "Assemble system");
     
+
     if (assemble_jacobian) 
       jacobian_matrix = 0.0;
 
     system_rhs = 0.0;
 
+
     FEValues<dim> fe_values(fe, quad_formula, update_values | update_quadrature_points | update_JxW_values | update_gradients);
     
+
     const unsigned int dofs_per_cell = fe.dofs_per_cell;
     const unsigned int n_q_points = quad_formula.size();
 
@@ -1109,7 +1160,9 @@ The constructor takes many inputs:
 
       }
     }
-
+```
+Now we compress the matrices and the RHS. In the case of the steady system, we also assemble the pressure mass matrix as done in step 57.
+```cpp
     if (assemble_jacobian)
     {
       jacobian_matrix.compress(VectorOperation::add);
@@ -1124,7 +1177,9 @@ The constructor takes many inputs:
     }
     system_rhs.compress(VectorOperation::add);
   }
-
+```
+## 
+```cpp
 
 
 // -------------------- ASSEMBLE THE SYSTEM --------------------
@@ -1647,5 +1702,4 @@ int main(int argc, char *argv[])
   }
   return 0;
 }
-
 ```

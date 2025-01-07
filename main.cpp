@@ -701,13 +701,18 @@ namespace coanda
       GridGenerator::subdivided_hyper_rectangle(rectangle, subdivisions, Point<3>(0, 0, 0), Point<3>(50, 7.5, 7.5));
     }
     
+
     if (n_glob_ref > 0) { rectangle.refine_global(n_glob_ref); } // explain why it is here
+
 
     std::set<typename Triangulation<dim>::active_cell_iterator> cells_to_remove;
     bool inside_domain{true};
+
+
     for (const auto &cell : rectangle.active_cell_iterators())
     {
       inside_domain = true;
+
       for (unsigned int v = 0; v < GeometryInfo<dim>::vertices_per_cell; ++v)
       {
         bool before_10_x_coord{cell->vertex(v)[0]<10};
@@ -716,45 +721,47 @@ namespace coanda
         if constexpr (dim == 2) 
         { 
           if (before_10_x_coord && first_check)
-          {
             inside_domain = false; // if dim==2, it is a sufficient condition to be in the inlet
-          }
+          
         }
         else // otherwise we need to check also the z component
         {
           double v2{cell->vertex(v)[2]};
           bool second_check{(v2 > 5.0 && v2 < 7.5) || (v2 < 2.5)};
-          if (before_10_x_coord && (first_check || second_check)) { inside_domain = false; }
+          
+          if (before_10_x_coord && (first_check || second_check))
+            inside_domain = false;
         }
       }
-      if (!inside_domain) { cells_to_remove.insert(cell); }
+
+
+      if (!inside_domain)
+        cells_to_remove.insert(cell);
     }
 
+
     GridGenerator::create_triangulation_with_removed_cells(rectangle, cells_to_remove, triangulation);
+
 
     for (const auto &face : triangulation.active_face_iterators()) {
       if (face->at_boundary())
       {
         double face_center{face->center()[0]};
         if (std::fabs(face_center) < 1e-12)
-        {
           face->set_boundary_id(1); // Inlet boundary
-        }
         else
         {
           if (std::fabs(face_center - 50.0) < 1e-12)
-          {
             face->set_boundary_id(2); // Outer boundary
-          }
           else
-          {
             face->set_boundary_id(3); // Wall boundary
-          }
         }
       }
     }
 
+
     if (distort_mesh) { GridTools::distort_random(0.05, triangulation, true); }
+
 
     std::ofstream out("mesh.vtk");
     GridOut grid_out;

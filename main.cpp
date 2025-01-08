@@ -10,8 +10,7 @@
       1.7) At least hints for the 3D case
       1.8) Refine the mesh according to the steady system and use it as fixed mesh for time stepping
     2) Write the presentation
-      2.1) Write a deal.II-like tutorial in tutorial.md
-      2.2) Write a pdf file with the summary of the results which we expect
+    3) Maybe: assemble matrices not depending on the mesh just once after each mesh refinement
 * ------------------------------------------------------------------------------ */
 
 
@@ -481,7 +480,10 @@ namespace coanda
 
 // -------------------- BLOCK SCHUR PRECONDITIONER VMULT --------------------
 
-  void BlockSchurPreconditioner::vmult(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const
+  void BlockSchurPreconditioner::vmult(
+                                      PETScWrappers::MPI::BlockVector &dst,
+                                      const PETScWrappers::MPI::BlockVector &src
+                                      ) const
   {
     PETScWrappers::MPI::Vector utmp(src.block(0));
     utmp = 0;
@@ -698,7 +700,7 @@ namespace coanda
       continuation_step_size(continuation_step_size),
       triangulation(mpi_communicator,
                     typename Triangulation<dim>::MeshSmoothing(Triangulation<dim>::smoothing_on_refinement |
-                    Triangulation<dim>::smoothing_on_coarsening)),
+                    Triangulation<dim>::smoothing_on_coarsening)), // to enforce some more regularity when refining
       fe(FE_Q<dim>(fe_degree + 1), dim, FE_Q<dim>(fe_degree), 1),
       dof_handler(triangulation),
       quad_formula(fe_degree + 2),
@@ -839,7 +841,8 @@ namespace coanda
 
     
     pcout << "---" << "Number of active fluid cells: " << triangulation.n_global_active_cells() << std::endl;
-    pcout << "---" << "Number of degrees of freedom: " << dof_handler.n_dofs() << " (" << dof_u << '+' << dof_p << ")" << std::endl;
+    pcout << "---" << "Number of degrees of freedom: " << dof_handler.n_dofs()
+          << " (" << dof_u << '+' << dof_p << ")" << std::endl;
 
 
     const FEValuesExtractors::Vector velocities(0);
@@ -1003,41 +1006,67 @@ namespace coanda
             {
               for (unsigned int j = 0; j < dofs_per_cell; ++j)
               {
-                const double quantity1 = viscosity * scalar_product(grad_phi_u[i], grad_phi_u[j])        //   a(u, v) ---> mu*grad(u)*grad(v)  
-                      + phi_u[i] * (present_velocity_gradients[q] * phi_u[j])                            //   Linearization of the convective term (pt. 1) 
-                      + phi_u[i] * (grad_phi_u[j] * present_velocity_values[q]);                         //   Linearization of the convective term (pt. 2) 
+                const double quantity1 =
+                      viscosity * scalar_product(grad_phi_u[i], grad_phi_u[j])   //  a(u, v) ---> mu*grad(u)*grad(v)  
+                      + phi_u[i] * (present_velocity_gradients[q] * phi_u[j])    //  Linearization of the convective term (pt. 1) 
+                      + phi_u[i] * (grad_phi_u[j] * present_velocity_values[q]); //  Linearization of the convective term (pt. 2) 
                 
-                const double quantity2 = - div_phi_u[i] * phi_p[j]                                       //   b(v, p) = -p*div(v)   
-                      - phi_p[i] * div_phi_u[j];                                                         //   b(u, q) = -q*div(u)  
+
+                const double quantity2 =
+                      - div_phi_u[i] * phi_p[j]                                  //  b(v, p) = -p*div(v)   
+                      - phi_p[i] * div_phi_u[j];                                 //  b(u, q) = -q*div(u)  
+
 
                 if (!steady_system)
                 {
-                  const double mass_matrix_contribution = (phi_u[i] * phi_u[j]) / time.get_delta_t();    //   From time stepping, 1/dt*M
-                  local_matrix(i, j) += (theta*quantity1 + quantity2 + mass_matrix_contribution)*fe_values.JxW(q); // fully implicit in the terms involving B
+                  const double mass_matrix_contribution =
+                        (phi_u[i] * phi_u[j]) / time.get_delta_t();               //  From time stepping, 1/dt*M
+
+
+                  local_matrix(i, j) += (
+                        mass_matrix_contribution
+                        + theta * quantity1
+                        + quantity2 // fully implicit in the terms involving B
+                        ) * fe_values.JxW(q);
                 }
 
+
                 else
-                  local_matrix(i, j) += (quantity1 + quantity2 + gamma*div_phi_u[i]*div_phi_u[j] + phi_p[i]*phi_p[j])*fe_values.JxW(q);
+                  local_matrix(i, j) += (
+                        quantity1
+                        + quantity2
+                        + gamma * div_phi_u[i] * div_phi_u[j]
+                        + phi_p[i] * phi_p[j]
+                        ) * fe_values.JxW(q);
               }
             }
+
 
             double present_velocity_divergence = trace(present_velocity_gradients[q]);
 
             // contributions from the right hand-side at times t^n and t^{n+1}
 
+            const double quantity1 = 
+                  -viscosity * scalar_product(grad_phi_u[i], present_velocity_gradients[q]) // from A
+                  - phi_u[i] * (present_velocity_gradients[q] * present_velocity_values[q]); //  from C
+
+
+            const double quantity2 = // from B^T and B
+                  + div_phi_u[i] * present_pressure_values[q]
+                  + phi_p[i] * present_velocity_divergence;
+ 
+ 
             if (!steady_system)
             {
               const double mass_matrix_contribution = (phi_u[i]*tmp[q]) / time.get_delta_t();
             
+
               local_rhs(i) += (
-                        mass_matrix_contribution + theta *
-                        (
-                        -viscosity * scalar_product(grad_phi_u[i], present_velocity_gradients[q])  // A
-                        - phi_u[i] * (present_velocity_gradients[q] * present_velocity_values[q])  // C
-                        )
-                        + div_phi_u[i] * present_pressure_values[q]
-                        + phi_p[i] * present_velocity_divergence
-                        ) * fe_values.JxW(q);
+                    mass_matrix_contribution
+                    + theta * quantity1
+                    + quantity2
+                    ) * fe_values.JxW(q);
+
 
               local_rhs(i) += ( (1-theta)*
                         (
@@ -1050,11 +1079,9 @@ namespace coanda
             else
             {
               local_rhs(i) += (
-                        -viscosity * scalar_product(grad_phi_u[i], present_velocity_gradients[q])
-                        - phi_u[i] * (present_velocity_gradients[q] * present_velocity_values[q])
-                        + div_phi_u[i] * present_pressure_values[q]
-                        + phi_p[i] * present_velocity_divergence
-                        - gamma * div_phi_u[i] * present_velocity_divergence
+                        quantity1
+                        + quantity2
+                        - gamma * div_phi_u[i] * present_velocity_divergence // from regularization
                         ) * fe_values.JxW(q);
             }
           }
@@ -1095,18 +1122,25 @@ namespace coanda
   template <int dim>
   void NS<dim>::assemble_system(const bool first_iteration, const bool steady_system)
   {
-    const bool assemble_jacobian{true};
-    assemble(first_iteration, assemble_jacobian, steady_system);
-    //pcout << "Frobenius norm of the Jacobian: " << jacobian_matrix.frobenius_norm() << std::endl;
+    const bool assemble_jacobian{true}; // if this function is called, we need to assemble the Jacobian matrix
+
+
+    assemble(first_iteration, assemble_jacobian, steady_system); // just call the assemble function
+
+
     pcout << "    The Jacobian matrix has been assembled" << std::endl;
+
 
     if (steady_system)
       steady_preconditioner.reset(new BlockSchurPreconditioner(timer, gamma, viscosity, jacobian_matrix, pressure_mass_matrix));
+
     else
     {
       preconditioner.reset(new SIMPLE(mpi_communicator, timer, owned_partitioning, relevant_partitioning, jacobian_matrix));
       preconditioner -> assemble();
     }
+
+
     pcout << "    The preconditioner has been assembled" << std::endl;
   }
  
@@ -1130,7 +1164,7 @@ namespace coanda
   {
     const AffineConstraints<double> &constraints_used = first_iteration ? nonzero_constraints : zero_constraints;
 
-    SolverControl solver_control(jacobian_matrix.m(), 1e-5 * system_rhs.l2_norm(), true);
+    SolverControl solver_control(100000, 1e-4 * system_rhs.l2_norm(), true);
     GrowingVectorMemory<PETScWrappers::MPI::BlockVector> vector_memory;
     SolverFGMRES<PETScWrappers::MPI::BlockVector> gmres(solver_control, vector_memory);
 
@@ -1225,7 +1259,7 @@ namespace coanda
           evaluation_points = dst;
 
         // We do not update the Jacobian at each iteration to reduce the cost
-        if (line_search_n % jacobian_update_step == 0 || (line_search_n < 2 && time.get_timestep()<15))
+        if (line_search_n % jacobian_update_step == 0 || (line_search_n < 2 && (time.get_timestep()<15 && !steady_system)))
           assemble_system(first_iteration, steady_system);
         else
           assemble_rhs(first_iteration, steady_system);
@@ -1257,11 +1291,10 @@ namespace coanda
         dst = evaluation_points;
         dst.update_ghost_values();
                 
-        {
-          pcout << "  number of line searches: " << line_search_n << "  residual: " << current_res << std::endl;
-          last_res = current_res;
+        pcout << "  number of line searches: " << line_search_n << "  residual: " << current_res << std::endl;
+        last_res = current_res;
+        if (line_search_n == 0)
           residuals_at_first_iteration.push_back(last_res);
-        }
         
         ++line_search_n;
       }
@@ -1337,11 +1370,15 @@ namespace coanda
   }
 
 
- 
+
 // -------------------- REFINE MESH --------------------
 
   template <int dim>
-  void NS<dim>::refine_mesh(const unsigned int min_grid_level, const unsigned int max_grid_level, const bool is_before_time_stepping)
+  void NS<dim>::refine_mesh(
+                            const unsigned int min_grid_level,
+                            const unsigned int max_grid_level,
+                            const bool is_before_time_stepping
+                            )
   {
     TimerOutput::Scope timer_section(timer, "Refine mesh");
     pcout << "Refining mesh..." << std::endl;
@@ -1370,7 +1407,7 @@ namespace coanda
                                         );
     
 
-    parallel::distributed::GridRefinement::refine_and_coarsen_fixed_fraction(triangulation, estimated_error_per_cell, 0.55, 0.45);
+    parallel::distributed::GridRefinement::refine_and_coarsen_fixed_fraction(triangulation, estimated_error_per_cell, 0.6, 0.4);
     
 
     if (triangulation.n_levels() > max_grid_level)
@@ -1450,7 +1487,7 @@ namespace coanda
       
       is_initial_step = false;
 
-      if (mu==target_viscosity) 
+      if (std::abs(mu - target_viscosity) < 1e-8)
         break;
     }
 
@@ -1591,10 +1628,10 @@ int main(int argc, char *argv[])
     const double refinement_interval{1e-1};
 
 
-    const bool use_continuation{false};
+    const bool use_continuation{true};
     const bool adaptive_refinement_after_continuation{true};
-    const double gamma{1.0};
-    const double viscosity_begin_continuation{0.51};
+    const double gamma{5};
+    const double viscosity_begin_continuation{1.5};
     const double continuation_step_size{1e-2};
     
 

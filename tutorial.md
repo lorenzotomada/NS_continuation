@@ -204,23 +204,23 @@ In order to ensure continuity of the boundary conditions, a parabolic inflow con
 In both cases, it is done in such a way that the boundary values function vanishes on the part of the boundary which is shared among the inlet and the walls.
 
 In 2D, in particular, we have that 
-$$
+```math
 	\boldsymbol{u}_{\text{inlet}}(x, y, t) =
 	\begin{bmatrix}
 		20(y - 2.5)(5 - y) \\
 		0
 	\end{bmatrix},
-$$
+```
 
 while in 3D we have 
-$$
+```math
 	\boldsymbol{u}_{\text{inlet}}(x, y, z, t) =
 	\begin{bmatrix}
 		20(y - 2.5)(5 - y)(z-2.5)(5-z) \\
 		0 \\
         0
 	\end{bmatrix}.
-$$
+```
 
 ```cpp
   template <int dim>
@@ -259,17 +259,17 @@ The only thing which is altered here is that I got rid on the dependence of SIMP
 
 For completeness, a defintion of the SIMPLE preconditioner is provided.
 Recall that the matrix resulting from a discretization of the Navier-Stokes equations can be expressed as follows:
-$$
+```math
 \mathcal{J} = \begin{bmatrix} 
 F & B^T \\ 
 -B & 0 
 \end{bmatrix},
-$$
+```
 in which $F = \frac{1}{\Delta t} M + A + C(\mathbf{U}^n)$, and $C(\mathbf{U}^n)$ is given by the (linearized) convection terms of
 the momentum equation.
 
 The SIMPLE preconditioner is defined as:
-$$
+```math
 P_\mathrm{SIMPLE} = \begin{bmatrix} 
 F & S \\ 
 -B & \widetilde{\Sigma} 
@@ -278,16 +278,17 @@ F & S \\
 I & D^{-1}B^T \\ 
 0 & I 
 \end{bmatrix},
-$$
-in which $D = \mathrm{diag}(F)$ is a diagonal matrix obtained from the diagonal entries of $F$, and $\widetilde{\Sigma} = S + B\,D^{-1}\,B^T$ is an approximation of the Schur complement.
+```
+in which $D = \mathrm{diag}(F)$ is a diagonal matrix obtained from the diagonal entries of $F$, and $\widetilde{\Sigma} = S + BD^{-1}B^T$ is an approximation of the Schur complement.
 In this approximation, replacing $F^{-1}$ with $D^{-1}$ allows explicit assembly of the matrix.
 
 To use the preconditioner, it is necessary to compute the application of its inverse to a vector, that is, $P_\mathrm{SIMPLE}^{-1} \mathbf{x}$.
 This operation, in turn, requires computing the inverses of $F$ and $\widetilde{\Sigma}$.
 
-To do so, $F$ and $\widetilde{\Sigma}$ are approximated, and we refere to the method obtained in this way as _aSIMPLE_ (approximate SIMPLE).
+To do so, $F$ and $\widetilde{\Sigma}$ are approximated, and we refer to the method obtained in this way as _aSIMPLE_ (approximate SIMPLE).
 
 ---
+#### `SIMPLE` helpers
 We begin by creating the sparsity pattern for the Schur complement matrix:
 ```cpp
   inline void schur_complement_sparsity(DynamicSparsityPattern &dst, const PETScWrappers::MPI::BlockSparseMatrix &src)
@@ -324,6 +325,7 @@ We can then compute the Schur complement:
     dst.add(-1.0, src.block(1, 1));
   }
 ```
+#### The `SIMPLE` class
 The following class is a declaration of the SIMPLE preconditioner. All the matrices and vectors which are going to be needed, as well as the owned and relevant partitioning, are saved within the class.
 ```cpp
   class SIMPLE : public Subscriptor
@@ -376,6 +378,7 @@ Here we also save a `PETScWrappers::SparseDirectMUMPS` object: while the choice 
     mutable PETScWrappers::SparseDirectMUMPS F_solver;
   };
 ```
+#### The `SIMPLE` constructor
 The constructor just initializes a temporary vector which is going to be needed in the following.
 ```cpp
   SIMPLE::SIMPLE(MPI_Comm mpi_communicator,
@@ -393,6 +396,7 @@ The constructor just initializes a temporary vector which is going to be needed 
     tmp.reinit(owned_partitioning, mpi_communicator);
   }
 ```
+#### Internal "helper" methods
 The following functions are needed to initialize and assemble the Schur complement and `diag_F_inv`:
 ```cpp
   // initialize_schur
@@ -443,6 +447,7 @@ The following functions are needed to initialize and assemble the Schur compleme
     schur_complement(approximate_schur, (*jacobian_matrix), diag_F_inv);
   }
 ```
+#### The `vmult` operation
 The following functions are the ones needed to implement `vmult`, i.e. multiplication left and right multiplication.
 ```cpp
   // vmult_l
@@ -554,9 +559,13 @@ The constructor does not really do anything apart from initializing the attribut
       A_solver(tmp_solver_control, (this->jacobian_matrix->block(0,0)).get_mpi_communicator())
   {}
 ```
+#### The `vmult` operation
 Of course, the vmult operation is implemented:
 ```cpp
-  void BlockSchurPreconditioner::vmult(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const
+  void BlockSchurPreconditioner::vmult(
+                                      PETScWrappers::MPI::BlockVector &dst,
+                                      const PETScWrappers::MPI::BlockVector &src
+                                      ) const
   {
     PETScWrappers::MPI::Vector utmp(src.block(0));
     utmp = 0;
@@ -595,7 +604,9 @@ Of course, the vmult operation is implemented:
 ---
 # The `NS` (Navier-Stokes) class
 
-This is the declaration of the Navier-Stokes class.
+The `NS` is the one taking care of actually solving the differential problem.
+
+A detailed description of the class is provided in the rest of this tutorial.
 
 ## An overview of the data to be passed to the constructor
 The constructor takes the following inputs:
@@ -610,9 +621,9 @@ The constructor takes the following inputs:
 - `time_end`, `delta_t`, `output_interval`, and `refinement_interval` are the inputs given to the constructor of the `Time` class;
 - `use_continuation` is a flag which specifies whether the continuation algorithm should be used;
 - `adaptive_refinement` is a flag which specifies whether the mesh should be refined adaptively or not (estimating the error using the solution obtained by means of the continuation algorithm);
--`gamma` is a stabilization paramter used in the steady case, following exactly what was done in step 57;
--`viscosity_begin_continuation` is the (optional) parameter denoting the right-handside of the interval used for continuation;
--`continuation_step_size` is the (optional) stepsize used for continuation.
+- `gamma` is a stabilization paramter used in the steady case, following exactly what was done in step 57;
+- `viscosity_begin_continuation` is the (optional) parameter denoting the right-handside of the interval used for continuation;
+- `continuation_step_size` is the (optional) stepsize used for continuation.
 
 Default values are provided for all the parameters which are not needed if continuation is not used.
 
@@ -635,7 +646,7 @@ After this phase, all the successive updates $\delta u^k$ and $\delta p^k$ are e
 
 
 ## An overview of the methods of the class
-For readability reasons, the methods of the class are going to be discussed in detail in the following, after their declaration and before their definition.
+For readability reasons, the methods of the class are going to be discussed in detail later on, after their declaration and before their definition.
 
 ```cpp
 template <int dim>
@@ -680,7 +691,7 @@ template <int dim>
                   const bool first_iteration,
                   const bool assemble_jacobian,
                   const bool steady_system=false
-                  ); // assemble both jacobian and residual
+                  );
 
     
     void assemble_system(const bool first_iteration, const bool steady_system=false);
@@ -815,7 +826,7 @@ Its only actions are to instantiate most of the attributes of the class, and to 
       continuation_step_size(continuation_step_size),
       triangulation(mpi_communicator,
                     typename Triangulation<dim>::MeshSmoothing(Triangulation<dim>::smoothing_on_refinement |
-                    Triangulation<dim>::smoothing_on_coarsening)),
+                    Triangulation<dim>::smoothing_on_coarsening)), // to enforce some more regularity when refining
       fe(FE_Q<dim>(fe_degree + 1), dim, FE_Q<dim>(fe_degree), 1),
       dof_handler(triangulation),
       quad_formula(fe_degree + 2),
@@ -829,7 +840,7 @@ Its only actions are to instantiate most of the attributes of the class, and to 
 ```
 ## The `make_grid` method
 This method creates a triangulation covering the domain considered in this project.
-An interesting remark is that `GridGenerator::subdivided_hyper_rectangle` needed to be used instead of `GridGenerator::hyper_rectangle`, as the latter yielded cells which were too stretched.
+An interesting remark is that `GridGenerator::subdivided_hyper_rectangle` needed to be used instead of `GridGenerator::hyper_rectangle`, as the latter yielded cells which were too stretched (here, instead, the aspect ratio of cells is closer to 1).
 ```cpp
   template <int dim>
   void NS<dim>::make_grid()
@@ -962,7 +973,8 @@ As in step 57, we reorder DOFs in such a way that the ones related to velocity p
 
     
     pcout << "---" << "Number of active fluid cells: " << triangulation.n_global_active_cells() << std::endl;
-    pcout << "---" << "Number of degrees of freedom: " << dof_handler.n_dofs() << " (" << dof_u << '+' << dof_p << ")" << std::endl;
+    pcout << "---" << "Number of degrees of freedom: " << dof_handler.n_dofs()
+          << " (" << dof_u << '+' << dof_p << ")" << std::endl;
 
 
     const FEValuesExtractors::Vector velocities(0);
@@ -1041,31 +1053,32 @@ Remark that the two following vectors are non-ghosted, as they need to be passed
     newton_update.reinit(owned_partitioning, mpi_communicator);
   }
 ```
-## `assemble_jacobian`
+## `assemble`
 This is a crucial method in the `NS` class, with the aim to assemble the Jacobian matrix and the system right-handside.
 
-It takes the following arguments:
--`first_iteration`, which specifies whether the current iteration of Newton's method is the first one. In that case, inhomogeneous DBCs are imposed. Else, homogeneous ones are used;
--`assemble_jacobian`, which is a boolean. Due to the fact that it is not always necessary to assemble the matrix, we might want to assemble the right-handside only. This is the case, e.g., when we need to compute the nonlinear residual, which is done by taking the norm of the right-handside only;
--`steady_system`, specifying whether we need to assemble the matrix and right-handside corresponding to the steady system. If false, the ones corresponding to the unsteady system are built.
+The method is designed in order to be flexible, avoiding to write two separate functions for assembling matrices related to the steady vs. unsteady system.
 
-We remark that it is not possible to assemble the matrices M, A and B just when the mesh is created.
+It takes the following arguments:
+- `first_iteration`, which specifies whether the current iteration of Newton's method is the first one. In that case, inhomogeneous DBCs are imposed on `newton_update`. Else, homogeneous ones are used;
+- `assemble_jacobian`, which is a boolean. Due to the fact that it is not always necessary to assemble the matrix, we might want to assemble the right-handside only. This is the case, e.g., when we need to compute the nonlinear residual, which is done by taking the norm of the right-handside only;
+- `steady_system`, specifying whether we need to assemble the matrix and right-handside corresponding to the steady system. If false, the ones corresponding to the unsteady system are built.
+
+An important remark which needs to be done is the following: since the mass matrix $M$, the stiffness matrix $A$ and the matrix $B$ depend exclusively on the mesh, it could make sense to assemble them just once after each mesh refinement.
+
+However, in this particular case, this approach is not necessarily the best one. The reason for this is explained in more detail in the body of the `assemble` method, in order to show the specific lines of codes for which criticalities might arise.
 ```cpp
   template <int dim>
   void NS<dim>::assemble(const bool first_iteration, const bool assemble_jacobian, const bool steady_system)
   {
     TimerOutput::Scope timer_section(timer, "Assemble system");
     
-
     if (assemble_jacobian) 
       jacobian_matrix = 0.0;
 
     system_rhs = 0.0;
 
-
     FEValues<dim> fe_values(fe, quad_formula, update_values | update_quadrature_points | update_JxW_values | update_gradients);
     
-
     const unsigned int dofs_per_cell = fe.dofs_per_cell;
     const unsigned int n_q_points = quad_formula.size();
 
@@ -1084,16 +1097,22 @@ We remark that it is not possible to assemble the matrices M, A and B just when 
 
     std::vector<Tensor<1, dim>> old_velocity_values(n_q_points);
     std::vector<Tensor<2, dim>> old_velocity_gradients(n_q_points);
+```
+We also create a temporart vector containing the values of $\boldsymbol{u}^{n}-\boldsymbol{u}^{n+1}$, as it is going to be needed when assembling the RHS.
+```cpp
+    std::vector<Tensor<1, dim>> tmp(n_q_points); 
+  
 
-    std::vector<Tensor<1, dim>> tmp(n_q_points); // old solution velocity - present velocity
-
-
+    // save the values of the FE functions
     std::vector<double> div_phi_u(dofs_per_cell);
     std::vector<Tensor<1, dim>> phi_u(dofs_per_cell);
     std::vector<Tensor<2, dim>> grad_phi_u(dofs_per_cell);
     std::vector<double> phi_p(dofs_per_cell);
-
-
+```
+As usual, we iterate over cells: if the cell is locally owned, we can compute its contribution to the matrix/RHS.
+Remark that, in this function, it is `evaluation_points` which is evaluated, and not directly `present solution`.
+This allows to tweak the value of `evaluation_points` if we want to provide a custom initial guess in the Newton iteration; moreover, it allows to set `evaluation_points=steady_solution` when we are dealing with the steady system instead, hence avoiding code duplication in the form of a separate `assemble` function.
+```cpp
     for (const auto &cell : dof_handler.active_cell_iterators())
     {
       if (cell->is_locally_owned())
@@ -1122,6 +1141,12 @@ We remark that it is not possible to assemble the matrices M, A and B just when 
         {
           for (unsigned int k = 0; k < dofs_per_cell; ++k)
           {
+```
+Now we compute the values and the gradients of the shape functions.
+
+These lines are the reason for which I have decided not to assemble $M,\,A$ and $B$ separately: while they only depend on the mesh, each time we assemble the Jacobian matrix we still have to compute *all* the following values (except for the pressure ones), to iterate over each cell and to perform operations with them.
+That means that, while this approach would indeed be more efficient from a computational point of view, it is also more memory demanding, and the superior memory consumption might not necessarily be compensated by the actual speed-up in computations.
+```cpp
             div_phi_u[k] = fe_values[velocities].divergence(k, q);
             grad_phi_u[k] = fe_values[velocities].gradient(k, q);
             phi_u[k] = fe_values[velocities].value(k, q);
@@ -1134,42 +1159,81 @@ We remark that it is not possible to assemble the matrices M, A and B just when 
             {
               for (unsigned int j = 0; j < dofs_per_cell; ++j)
               {
-                const double quantity1 = viscosity * scalar_product(grad_phi_u[i], grad_phi_u[j])        //   a(u, v) ---> mu*grad(u)*grad(v)  
-                      + phi_u[i] * (present_velocity_gradients[q] * phi_u[j])                            //   Linearization of the convective term (pt. 1) 
-                      + phi_u[i] * (grad_phi_u[j] * present_velocity_values[q]);                         //   Linearization of the convective term (pt. 2) 
+```
+At this point, we assemble separately some of the quanitites appearing in the Jacobian matrix.
+The variables `quantity1` and `quantity2` correspond to different contributions to the matrix (see the comments below for a more detailed clarification), but just `quantity1` will be multiplied by $\theta$ when using a $\theta$-method.
+```cpp
+                const double quantity1 =
+                      viscosity * scalar_product(grad_phi_u[i], grad_phi_u[j])   //  a(u, v) ---> mu*grad(u)*grad(v)  
+                      + phi_u[i] * (present_velocity_gradients[q] * phi_u[j])    //  Linearization of the convective term 
+                      + phi_u[i] * (grad_phi_u[j] * present_velocity_values[q]); //  Linearization of the convective term  
                 
-                const double quantity2 = - div_phi_u[i] * phi_p[j]                                       //   b(v, p) = -p*div(v)   
-                      - phi_p[i] * div_phi_u[j];                                                         //   b(u, q) = -q*div(u)  
 
+                const double quantity2 =
+                      - div_phi_u[i] * phi_p[j]                                   //  b(v, p) = -p*div(v)   
+                      - phi_p[i] * div_phi_u[j];                                  //  b(u, q) = -q*div(u)  
+```
+When solving the unsteady system, the previously done computation of the Jacobian shows us that it is needed to add the mass matrix $M$ divided by the time step.
+Moreover, we have to multiply `quantity1` by $\theta$. Recall that, by choice, the method is fully implicit in the pressure.
+```cpp
                 if (!steady_system)
                 {
-                  const double mass_matrix_contribution = (phi_u[i] * phi_u[j]) / time.get_delta_t();    //   From time stepping, 1/dt*M
-                  local_matrix(i, j) += (theta*quantity1 + quantity2 + mass_matrix_contribution)*fe_values.JxW(q); // fully implicit in the terms involving B
-                }
+                  const double mass_matrix_contribution =
+                        (phi_u[i] * phi_u[j]) / time.get_delta_t();                //  From time stepping, 1/dt*M
 
+
+                  local_matrix(i, j) += (
+                        mass_matrix_contribution
+                        + theta*quantity1
+                        + quantity2 // fully implicit in the terms involving B
+                        ) * fe_values.JxW(q); 
+                }
+```
+Otherwise, assembling the steady system we add exactly the same quantities specified in step 57, i.e. also a regularization term and the addend allowing to build the pressure mass matrix.
+```cpp
                 else
-                  local_matrix(i, j) += (quantity1 + quantity2 + gamma*div_phi_u[i]*div_phi_u[j] + phi_p[i]*phi_p[j])*fe_values.JxW(q);
+                  local_matrix(i, j) += (
+                        quantity1
+                        + quantity2
+                        + gamma * div_phi_u[i] * div_phi_u[j]
+                        + phi_p[i] * phi_p[j]
+                        ) * fe_values.JxW(q);
               }
             }
+```
+We can then assemble the RHS.
+Also in this case it is necessary to distinguish whether we are solving the steady system or not.
 
+We begin by computing the divergence of `evaluation_points`:
+```cpp
             double present_velocity_divergence = trace(present_velocity_gradients[q]);
+```
+and then we compute `quantity1` and `quantity2` as before:
+```cpp
+            const double quantity1 = 
+                  -viscosity * scalar_product(grad_phi_u[i], present_velocity_gradients[q]) // from A
+                  - phi_u[i] * (present_velocity_gradients[q] * present_velocity_values[q]); //  from C
 
-            // contributions from the right hand-side at times t^n and t^{n+1}
 
+            const double quantity2 = // from B^T and B
+                  + div_phi_u[i] * present_pressure_values[q]
+                  + phi_p[i] * present_velocity_divergence;
+```
+If we are solving the unsteady system, we also need the mass matrix contribution
+```cpp
             if (!steady_system)
             {
               const double mass_matrix_contribution = (phi_u[i]*tmp[q]) / time.get_delta_t();
             
-              local_rhs(i) += (
-                        mass_matrix_contribution + theta *
-                        (
-                        -viscosity * scalar_product(grad_phi_u[i], present_velocity_gradients[q])  // A
-                        - phi_u[i] * (present_velocity_gradients[q] * present_velocity_values[q])  // C
-                        )
-                        + div_phi_u[i] * present_pressure_values[q]
-                        + phi_p[i] * present_velocity_divergence
-                        ) * fe_values.JxW(q);
 
+              local_rhs(i) += (
+                    mass_matrix_contribution
+                    + theta * quantity1
+                    + quantity2
+                    ) * fe_values.JxW(q);
+```
+as well as the one form the solution at the previous time step:
+```cpp
               local_rhs(i) += ( (1-theta)*
                         (
                         -viscosity * scalar_product(grad_phi_u[i], old_velocity_gradients[q])
@@ -1177,30 +1241,32 @@ We remark that it is not possible to assemble the matrices M, A and B just when 
                         )
                         ) * fe_values.JxW(q);
             }
-
+```
+Instead, if `steady_system` is true, we follow what was done in step 57:
+```cpp
             else
             {
               local_rhs(i) += (
-                        -viscosity * scalar_product(grad_phi_u[i], present_velocity_gradients[q])
-                        - phi_u[i] * (present_velocity_gradients[q] * present_velocity_values[q])
-                        + div_phi_u[i] * present_pressure_values[q]
-                        + phi_p[i] * present_velocity_divergence
-                        - gamma * div_phi_u[i] * present_velocity_divergence
+                        quantity1
+                        + quantity2
+                        - gamma * div_phi_u[i] * present_velocity_divergence // from regularization
                         ) * fe_values.JxW(q);
             }
           }
         }
-
-
+```
+We choose the correct constraints object and use its `distribute_local_to_global` method:
+```cpp
         cell->get_dof_indices(local_dof_indices);
+
 
         const AffineConstraints<double> &constraints_used = first_iteration ? nonzero_constraints : zero_constraints;
        
+
         if (assemble_jacobian)
           constraints_used.distribute_local_to_global(local_matrix, local_rhs, local_dof_indices, jacobian_matrix, system_rhs);
         else
           constraints_used.distribute_local_to_global(local_rhs, local_dof_indices, system_rhs);
-
       }
     }
 ```
@@ -1218,70 +1284,97 @@ Now we compress the matrices and the RHS. In the case of the steady system, we a
         jacobian_matrix.compress(VectorOperation::add);
       } 
     }
+
     system_rhs.compress(VectorOperation::add);
   }
 ```
-## 
+## `assemble_system` and `assemble_rhs`
+The following two methods have been written to call `assemble_system` with the correct parameters.
+
+Both of them accept two booleans as input, the first one stating whether we are currently at the first iteration (to decide which `AffineConstraints<double>` object to use), and the second one to determine whether to build the matrix and RHS corresponding to the steady case or to the unsteady one.
 ```cpp
-
-
-// -------------------- ASSEMBLE THE SYSTEM --------------------
+// assemble_system
 
   template <int dim>
   void NS<dim>::assemble_system(const bool first_iteration, const bool steady_system)
   {
-    const bool assemble_jacobian{true};
-    assemble(first_iteration, assemble_jacobian, steady_system);
-    //pcout << "Frobenius norm of the Jacobian: " << jacobian_matrix.frobenius_norm() << std::endl;
+    const bool assemble_jacobian{true}; // if this function is called, we need to assemble the Jacobian matrix
+
+    assemble(first_iteration, assemble_jacobian, steady_system); // just call the assemble function
+
+
     pcout << "    The Jacobian matrix has been assembled" << std::endl;
 
+```
+The only interesting remark regarding this function is that the preconditioner is initialized each time the Jacobian is updated.
+
+Clearly, the correct one needs to be selected, depending on the `steady_system` flag.
+```cpp
     if (steady_system)
       steady_preconditioner.reset(new BlockSchurPreconditioner(timer, gamma, viscosity, jacobian_matrix, pressure_mass_matrix));
+
     else
     {
       preconditioner.reset(new SIMPLE(mpi_communicator, timer, owned_partitioning, relevant_partitioning, jacobian_matrix));
       preconditioner -> assemble();
     }
+
+
     pcout << "    The preconditioner has been assembled" << std::endl;
   }
  
 
 
-// -------------------- ASSEMBLE THE RESIDUAL --------------------
+// assemble_rhs
 
   template <int dim>
   void NS<dim>::assemble_rhs(const bool first_iteration, const bool steady_system)
   {
-    const bool assemble_jacobian{false};
+    const bool assemble_jacobian{false};  // we just need the RHS
+
     assemble(first_iteration, assemble_jacobian, steady_system);
   }
+```
+## The `solve` method
 
-
-
-// -------------------- SOLVE --------------------
-
+This method is needed to solve the linear system stemming at each step of Newton's method.
+Its input, as for the previous two cases, determine the boundary conditions used and the preconditioner to be selected.
+```cpp
   template <int dim>
   void NS<dim>::solve(const bool first_iteration, const bool steady_system)
   {
+    // select the correct AffineConstraints object
     const AffineConstraints<double> &constraints_used = first_iteration ? nonzero_constraints : zero_constraints;
 
-    SolverControl solver_control(jacobian_matrix.m(), 1e-5 * system_rhs.l2_norm(), true);
+
+    // instantiate the solver
+    SolverControl solver_control(jacobian_matrix.m(), 1e-4 * system_rhs.l2_norm(), true);
     GrowingVectorMemory<PETScWrappers::MPI::BlockVector> vector_memory;
     SolverFGMRES<PETScWrappers::MPI::BlockVector> gmres(solver_control, vector_memory);
+
 
     if (!steady_system)
       gmres.solve(jacobian_matrix, newton_update, system_rhs, *preconditioner);
     else
       gmres.solve(jacobian_matrix, newton_update, system_rhs, *steady_preconditioner);
 
+
     pcout << "  FGMRES steps: " << solver_control.last_step() << std::endl;
-    constraints_used.distribute(newton_update);
+
+
+    constraints_used.distribute(newton_update); // distribute the correct set of constraints
   }
- 
+```
+## The `newton_iteration` method
 
+This method is possibly the most important one of the whole class when it comes to the continuation algorithm previously introduced.
 
-// -------------------- NEWTON ITERATION --------------------
-
+Its input are:
+- `dst`, the vector in which the solution is going to be saved (and which serve as initial condition in the steady case and, if continuation is not used, in the unsteady one);
+- `tolerance`, to serve as tolerance on the residual to decide whether or not stop;
+- `max_n_line_searches`, the maximum number of iterations of Newton's method which is allowed;
+- the usual `is_initial_step` and `steady_system`.
+```cpp
   template <int dim>
   void NS<dim>::newton_iteration(
                                 PETScWrappers::MPI::BlockVector &dst,
@@ -1295,7 +1388,13 @@ Now we compress the matrices and the RHS. In the case of the steady system, we a
     unsigned int line_search_n{0};
     double last_res{1.0};
     double current_res{1.0};
- 
+```
+As usual, the check on `first_iteration` is needed to impose the correct set of DBCs.
+
+Moreover, we assume that at the first step the initial guess is the zero vector, so we assign `dst=newton_update` and we apply nonzero DBCs.
+
+The following updates satisfy homogeneous DBCs, so that the operation `dst+=newton_update` returns a vector which satisfies the correct set of DBCs.
+```cpp
     while ((first_iteration || (current_res > tolerance)) && line_search_n < max_n_line_searches)
     {
       if (first_iteration)
@@ -1306,7 +1405,7 @@ Now we compress the matrices and the RHS. In the case of the steady system, we a
         evaluation_points = 0;
 
         assemble_system(first_iteration, steady_system);
-        solve(first_iteration, steady_system);
+        solve(first_iteration, steady_system); // solve the system
 
         nonzero_constraints.distribute(newton_update);
 
@@ -1316,35 +1415,43 @@ Now we compress the matrices and the RHS. In the case of the steady system, we a
         first_iteration = false;
         evaluation_points = dst;
 
-        assemble_rhs(first_iteration, steady_system);
+        assemble_rhs(first_iteration, steady_system); // we compute the residual
 
         current_res = system_rhs.l2_norm();
         pcout << "  The residual of initial guess is " << current_res << std::endl;
         last_res = current_res;
       }
-
+```
+After the first iteration, we might want to provide the solver with a custom initial guess.
+This is done in line with what was explained in the theoretical introduction, i.e. considering a linear combination of the steady solution with the one at the previous time step.
+ ```cpp
       else
       {
         // Choose the initial guess for Netwon's method: either the solution at the previous time step, or a linear combination 
         // between it and an asymmetrical one
         double guess_u_norm{steady_solution.block(0).l2_norm()};
 
+
         if (use_continuation && guess_u_norm!=0 && !steady_system && line_search_n==0)  // reinit initial guess
         {
-          PETScWrappers::MPI::BlockVector tmp_initial_guess; /* Now it is used to measure the distance between the solution at the previous
-                                                              * time step and the steady solution.
-                                                              * Afterwards, it will be reinitialized and used as an actual initial guess */
+          PETScWrappers::MPI::BlockVector tmp_initial_guess; 
           tmp_initial_guess.reinit(owned_partitioning, mpi_communicator);
-
+```
+At first, `tmp_initial_guess` is used to measure the distance between the solution at the previous time step and the steady solution.
+Afterwards, it will be reinitialized and used as an actual initial guess.
+```cpp
           tmp_initial_guess -= old_solution;
           tmp_initial_guess += steady_solution; // initial guess - old solution
+
 
           double dist_from_guess{tmp_initial_guess.l2_norm()};
           double alpha = dist_from_guess/guess_u_norm; // so that it is always in [0, 1]
           pcout << "  The relative distance between the solution at the previous time step and the one to the steady problem is " << alpha << std::endl;
 
+
           evaluation_points.reinit(owned_partitioning, mpi_communicator);
           evaluation_points = 0.0;
+
 
           tmp_initial_guess.reinit(owned_partitioning, mpi_communicator);
           tmp_initial_guess += old_solution; /* if alpha = 0, || initial_guess - old solution || = 0, so that initial_guess = old solution
@@ -1356,21 +1463,36 @@ Now we compress the matrices and the RHS. In the case of the steady system, we a
           evaluation_points += tmp_initial_guess; // alpha*old solution + (1-alpha)*initial_guess
         }
 
+```
+This way, we never get to far from a previous solution with the initial guess, so we (hopefully) avoid the situation in which the convergence of Newton's method is no longer guaranteed; however, we are still introducing some bias by "showing" the solver that the solution should not be symmetrical.
+
+If no guess is provided, we use the values of the solution at the previous iteration.
+```cpp
         else 
           evaluation_points = dst;
+```
+Remark that, to reduce the cost associated to the assembly of the matrix, we do not update the Jacobian at ech iteration.
 
-        // We do not update the Jacobian at each iteration to reduce the cost
+If the current time is small (and, as such, the relative distance between two subsequent solutions is high), it might be beneficial to update it with some more "consistency" (not in the meaning of the word in the numerical analysis context).
+```cpp
         if (line_search_n % jacobian_update_step == 0 || (line_search_n < 2 && time.get_timestep()<15))
           assemble_system(first_iteration, steady_system);
+
         else
           assemble_rhs(first_iteration, steady_system);
 
-        solve(first_iteration, steady_system);
- 
+
+        solve(first_iteration, steady_system); // solve the system
+```
+As in step 57, we implement a simple line search strategy, which computes `present_solution` + $\alpha\cdot$ `newton_update` and checks whether the residual has decreased.
+
+If it is not the case, $\alpha$ is divided by two and the procedure is repeated.
+```cpp
         for (double alpha = 1.0; alpha > 1e-5; alpha *= 0.5)
         {
           evaluation_points.reinit(owned_partitioning, mpi_communicator);
           evaluation_points = dst;
+
 
           PETScWrappers::MPI::BlockVector tmp;
           tmp.reinit(owned_partitioning, mpi_communicator);
@@ -1379,42 +1501,53 @@ Now we compress the matrices and the RHS. In the case of the steady system, we a
           tmp *= alpha;
           evaluation_points += tmp;
 
+
           nonzero_constraints.distribute(evaluation_points);
           assemble_rhs(first_iteration, steady_system); // we assemble taking into account the boundary conditions
+
 
           current_res = system_rhs.l2_norm();
           pcout << "    alpha: " << std::setw(10) << alpha << std::setw(0) << "  residual: " << current_res << std::endl;
 
-          if (current_res < last_res)
+
+          if (current_res < last_res) // we are closer to the solution: stop line-search
             break;
         }
 
+
         dst = evaluation_points;
-        dst.update_ghost_values();
+        dst.update_ghost_values(); // to update the ghost values
+
                 
-        {
-          pcout << "  number of line searches: " << line_search_n << "  residual: " << current_res << std::endl;
-          last_res = current_res;
+        pcout << "  number of line searches: " << line_search_n << "  residual: " << current_res << std::endl;
+        last_res = current_res;
+```
+As anticipated in the theoretical introduction, we also save the residual at the first iteration.
+```cpp
+        if (line_search_n == 0)
           residuals_at_first_iteration.push_back(last_res);
-        }
+        
         
         ++line_search_n;
       }
     }
   }
+```
+# Output results via `output_results`
+As we should expect, the method `output_results` is used to output results at the selected instances of time.
 
-
-
-// -------------------- OUTPUT RESULTS --------------------
-
+The only difference of this implementation with respect to the one in the `deal.II` gallery is that here the `output_steady_solution` flag is passed, to determine whether we should output the steady solution (after continuation) or the one at the current time step.
+```cpp
   template <int dim>
   void NS<dim>::output_results(const unsigned int output_index, const bool output_steady_solution) const
   {
     TimerOutput::Scope timer_section(timer, "Output results");
     pcout << "Writing results..." << std::endl;
 
+
     std::vector<std::string> solution_names(dim, "velocity");
     solution_names.push_back("pressure");
+
 
     std::vector<DataComponentInterpretation::DataComponentInterpretation> data_component_interpretation(
                                                                               dim,
@@ -1422,8 +1555,10 @@ Now we compress the matrices and the RHS. In the case of the steady system, we a
                                                                               );
     data_component_interpretation.push_back(DataComponentInterpretation::component_is_scalar);
 
+
     DataOut<dim> data_out;
     data_out.attach_dof_handler(dof_handler);
+
 
     // vector to be output must be ghosted
     if (!output_steady_solution) 
@@ -1437,6 +1572,7 @@ Now we compress the matrices and the RHS. In the case of the steady system, we a
       data_out.add_data_vector(steady_solution, solution_names, DataOut<dim>::type_dof_data, data_component_interpretation); 
     }
 
+
     // Partition
     Vector<float> subdomain(triangulation.n_active_cells());
     
@@ -1446,6 +1582,7 @@ Now we compress the matrices and the RHS. In the case of the steady system, we a
     data_out.add_data_vector(subdomain, "subdomain");
     data_out.build_patches(fe_degree + 1);
 
+
     std::string basename;
 
     if (!output_steady_solution)
@@ -1453,13 +1590,17 @@ Now we compress the matrices and the RHS. In the case of the steady system, we a
     else 
       basename = "steady_solution";
 
+
     std::string filename = basename + Utilities::int_to_string(triangulation.locally_owned_subdomain(), 4) + ".vtu";
+
 
     std::ofstream output(filename);
     data_out.write_vtu(output);
 
+
     static std::vector<std::pair<double, std::string>> times_and_names;
-    
+
+
     if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
     {
       for (unsigned int i = 0; i < Utilities::MPI::n_mpi_processes(mpi_communicator); ++i)
@@ -1470,13 +1611,24 @@ Now we compress the matrices and the RHS. In the case of the steady system, we a
       DataOutBase::write_pvd_record(pvd_output, times_and_names);
     }
   }
+```
+## `refine_mesh` for mesh refinement
+As the name suggests, this method is called in order to perform mesh refinement.
+It takes as input two different (unsigned) integers, and a boolean.
 
+The two numbers correspond to the minimum grid level and the maximum one, which determine how the refinement is performed (avoiding that the level of refinement/coarsening of the cells are not included in the $\{\text{min_grid_level}, \dots, \text{max_grid_level}\}$).
 
- 
-// -------------------- REFINE MESH --------------------
+The flag `is_before_time_stepping`, instead, is passed if and only if we have chosen to use the continuation algorithm, and decided to refine the mesh before time-stepping.
+The estimator which is used is Kell's one, and it is applied either to `present_solution` or (if `is_before_time_stepping` is `true`), to `steady_solution`.
 
+The logic of the function does not present big differences w.r.t. the ones introduced in step 57 and the gallery code for unsteady Navier-Stokes, so no further comments are provided on that.
+```cpp
   template <int dim>
-  void NS<dim>::refine_mesh(const unsigned int min_grid_level, const unsigned int max_grid_level)
+  void NS<dim>::refine_mesh(
+                            const unsigned int min_grid_level,
+                            const unsigned int max_grid_level,
+                            const bool is_before_time_stepping
+                            )
   {
     TimerOutput::Scope timer_section(timer, "Refine mesh");
     pcout << "Refining mesh..." << std::endl;
@@ -1485,18 +1637,42 @@ Now we compress the matrices and the RHS. In the case of the steady system, we a
     Vector<float> estimated_error_per_cell(triangulation.n_active_cells());
     const FEValuesExtractors::Vector velocity(0);
 
-    KellyErrorEstimator<dim>::estimate(dof_handler, face_quad_formula, {}, present_solution, estimated_error_per_cell, fe.component_mask(velocity));
-    parallel::distributed::GridRefinement::refine_and_coarsen_fixed_fraction(triangulation, estimated_error_per_cell, 0.55, 0.45);
+    if (!is_before_time_stepping) // use present_solution or steady_solution according the the value of the flag
+      KellyErrorEstimator<dim>::estimate(
+                                        dof_handler,
+                                        face_quad_formula,
+                                        {},
+                                        present_solution,
+                                        estimated_error_per_cell,
+                                        fe.component_mask(velocity)
+                                        );
+
+    else
+      KellyErrorEstimator<dim>::estimate(
+                                        dof_handler,
+                                        face_quad_formula,
+                                        {},
+                                        steady_solution,
+                                        estimated_error_per_cell,
+                                        fe.component_mask(velocity)
+                                        );
     
 
+    parallel::distributed::GridRefinement::refine_and_coarsen_fixed_fraction(triangulation, estimated_error_per_cell, 0.6, 0.4);
+    
+
+    // ensure that refinement and coarsening do not exceed the fixed levels
     if (triangulation.n_levels() > max_grid_level)
       for (auto cell = triangulation.begin_active(max_grid_level); cell != triangulation.end(); ++cell) 
         cell->clear_refine_flag();
 
     for (auto cell = triangulation.begin_active(min_grid_level); cell != triangulation.end_active(min_grid_level); ++cell)
       cell->clear_coarsen_flag();
+```
+Unlike what happens in step 57, here we create two different `parallel::distributed::SolutionTransfer<dim, PETScWrappers::MPI::BlockVector>` objects, one to accomodate `present_solution`, and the other one for `steady_solution`.
 
-
+If continuation is not used, `trans2` does not do anything.
+```cpp
     parallel::distributed::SolutionTransfer<dim, PETScWrappers::MPI::BlockVector> trans1(dof_handler);
     parallel::distributed::SolutionTransfer<dim, PETScWrappers::MPI::BlockVector> trans2(dof_handler);
 
@@ -1518,8 +1694,7 @@ Now we compress the matrices and the RHS. In the case of the steady system, we a
     setup_system();
 
 
-    // Transfer solution
-    // Need a non-ghosted vector for interpolation
+    // Transfer solution: we need a non-ghosted vector for interpolation
     PETScWrappers::MPI::BlockVector tmp(newton_update);
     tmp = 0;
 
@@ -1532,8 +1707,7 @@ Now we compress the matrices and the RHS. In the case of the steady system, we a
 
     
 
-
-    if (use_continuation) 
+    if (use_continuation) // only transfer steady_solution if interpolation is used
     {
       tmp = 0;
 
@@ -1572,7 +1746,7 @@ The logic behind it is the one described in the theoretical introduction, so no 
       is_initial_step = false; // set to false after the first iteration
 
 
-      if (mu==target_viscosity) 
+      if (std::abs(mu - target_viscosity) < 1e-8) 
         break;
     }
 
@@ -1697,53 +1871,51 @@ int main(int argc, char *argv[])
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
 
     
-    const double theta{0.5}; // using the trapezoidal rule to integrate in time
-    const bool adaptive_refinement{true};
-    const bool adaptive_refinement_after_continuation{true};
-
-
-    const bool use_continuation{false};
     const bool distort_mesh{false};
+    const bool adaptive_refinement{true};
 
 
-    const unsigned int fe_degree{1};
-    const double stopping_criterion{1e-7};
     const unsigned int n_glob_ref{1};
-
-
+    const unsigned int fe_degree{1};
     const unsigned int jacobian_update_step{3};
-    const double gamma{1.0};
-
-
-    const double time_end{25};
-    const double delta_t{1e-2};
-    const double output_interval{0.5};
-    const double refinement_interval{1};
 
 
     const double viscosity{0.5};
-    const double viscosity_begin_continuation{2.0};
+    const double theta{0.5};
+    const double stopping_criterion{1e-7};
+    
+
+    const double time_end{25};
+    const double delta_t{1e-2};
+    const double output_interval{1e-1};
+    const double refinement_interval{1e-1};
+
+
+    const bool use_continuation{false};
+    const bool adaptive_refinement_after_continuation{true};
+    const double gamma{1.0};
+    const double viscosity_begin_continuation{0.51};
     const double continuation_step_size{1e-2};
     
 
     NS<2> bifurc_NS{
-                    theta,
-                    adaptive_refinement,
-                    adaptive_refinement_after_continuation,
-                    use_continuation,
                     distort_mesh,
-                    fe_degree,
-                    stopping_criterion,
+                    adaptive_refinement,
                     n_glob_ref,
+                    fe_degree,
                     jacobian_update_step,
-                    gamma,
+                    theta,
+                    viscosity,
+                    stopping_criterion,
                     time_end,
                     delta_t,
                     output_interval,
                     refinement_interval,
-                    viscosity,
+                    use_continuation,
+                    adaptive_refinement_after_continuation,
+                    gamma,
                     viscosity_begin_continuation,
-                    continuation_step_size
+                    continuation_step_size,
                   };
 
 
@@ -1769,6 +1941,17 @@ int main(int argc, char *argv[])
   }
 
 
-  return 0; 
+  return 0;
 }
 ```
+
+# Numerical results
+## Case 1
+## Case 2
+## Case 3
+
+# Possible extensions
+A few ideas include:
+- finding a suitable iterative method/preconditioner for the `SIMPLE` and `BlockSchurPreconditioner` inner linear systems with the `(0,0)` block of $F$
+- performing numerical experiment in the 3D case (related to the previous one)
+- experimenting with different kinds of meshes (tetrahedral ones, more irregular ones)

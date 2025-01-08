@@ -1,10 +1,8 @@
 /* -----------------------------------------------------------------------------
  TODO:
-    0) Minimal changes
-      0.1) Reorder a bit the arguments passed to the constructor
     1) Perform tests
       1.1) Find the steady, stable solution
-      1.2) Without mesh refinement, symmetrical mesh
+      1.2) Without mesh refinement, symmetrical mesh (likely done in the unsteady case)
       1.3) Without mesh refinement, asymmetrical mesh
       1.4) With mesh refinement, symmetrical mesh
       1.5) With mesh refinement, symmetrical mesh, asymmetrical refinement (set refinement flag only e.g. if y > 7.5/2)
@@ -27,30 +25,9 @@
 #include <deal.II/base/utilities.h>
 
 
-#include <deal.II/lac/affine_constraints.h>
-#include <deal.II/lac/dynamic_sparsity_pattern.h>
-#include <deal.II/lac/full_matrix.h>
-#include <deal.II/lac/precondition.h>
-#include <deal.II/lac/solver_control.h>
-#include <deal.II/lac/solver_gmres.h>
-#include <deal.II/lac/sparsity_tools.h>
-
-
-#include <deal.II/lac/petsc_block_sparse_matrix.h>
-#include <deal.II/lac/petsc_solver.h>
-#include <deal.II/lac/petsc_sparse_matrix.h>
-#include <deal.II/lac/petsc_precondition.h>
-#include <deal.II/lac/petsc_vector.h>
-
-
-#include <deal.II/grid/grid_generator.h>
-#include <deal.II/grid/grid_refinement.h>
-#include <deal.II/grid/grid_tools.h>
-#include <deal.II/grid/grid_out.h>
-#include <deal.II/grid/manifold_lib.h>
-#include <deal.II/grid/tria.h>
-#include <deal.II/grid/tria_accessor.h>
-#include <deal.II/grid/tria_iterator.h>
+#include <deal.II/distributed/grid_refinement.h>
+#include <deal.II/distributed/solution_transfer.h>
+#include <deal.II/distributed/tria.h>
 
 
 #include <deal.II/dofs/dof_accessor.h>
@@ -64,15 +41,35 @@
 #include <deal.II/fe/fe_values.h>
 
 
+#include <deal.II/grid/grid_generator.h>
+#include <deal.II/grid/grid_refinement.h>
+#include <deal.II/grid/grid_tools.h>
+#include <deal.II/grid/grid_out.h>
+#include <deal.II/grid/manifold_lib.h>
+#include <deal.II/grid/tria.h>
+#include <deal.II/grid/tria_accessor.h>
+#include <deal.II/grid/tria_iterator.h>
+
+
+#include <deal.II/lac/affine_constraints.h>
+#include <deal.II/lac/dynamic_sparsity_pattern.h>
+#include <deal.II/lac/full_matrix.h>
+#include <deal.II/lac/precondition.h>
+#include <deal.II/lac/solver_control.h>
+#include <deal.II/lac/solver_gmres.h>
+#include <deal.II/lac/sparsity_tools.h>
+
+#include <deal.II/lac/petsc_block_sparse_matrix.h>
+#include <deal.II/lac/petsc_solver.h>
+#include <deal.II/lac/petsc_sparse_matrix.h>
+#include <deal.II/lac/petsc_precondition.h>
+#include <deal.II/lac/petsc_vector.h>
+
+
 #include <deal.II/numerics/data_out.h>
 #include <deal.II/numerics/error_estimator.h>
 #include <deal.II/numerics/matrix_tools.h>
 #include <deal.II/numerics/vector_tools.h>
-
-
-#include <deal.II/distributed/grid_refinement.h>
-#include <deal.II/distributed/solution_transfer.h>
-#include <deal.II/distributed/tria.h>
 
 
 #include <fstream>
@@ -104,12 +101,17 @@ namespace coanda
       for (size_t i = 0; i < vec.size(); ++i)
       {
         out << vec[i];
-        if (i != vec.size() - 1) out << ",";
+        if (i != vec.size() - 1)
+          out << ",";
       }
       out.close();
     }
 
-    catch (const std::exception& e) { std::cerr << "It was not possible to save the vector to a file named " << filename << ". Error: " << e.what() << std::endl; }
+    catch (const std::exception& e)
+    {
+      std::cerr << "It was not possible to save the vector to a file named "
+                << filename << ". Error: " << e.what() << std::endl;
+    }
   }
 
 
@@ -267,18 +269,20 @@ namespace coanda
           const std::vector<IndexSet> &owned_partitioning,
           const std::vector<IndexSet> &relevant_partitioning,
           const PETScWrappers::MPI::BlockSparseMatrix &jacobian_matrix
-    );
+          );
 
 
     void initialize_schur();
     void initialize();
     void assemble();
 
+
     void vmult(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const
     {
       vmult_L(tmp, src);
       vmult_U(dst, tmp);
     }
+
   
     private:
     void vmult_L(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const;
@@ -297,7 +301,7 @@ namespace coanda
     mutable PETScWrappers::MPI::BlockVector tmp;
     PETScWrappers::MPI::Vector diag_F_inv;
 
-    SolverControl tmp_solver_control;
+    SolverControl tmp_solver_control; // used just to initialize F_solver
     mutable PETScWrappers::SparseDirectMUMPS F_solver;
   };
 
@@ -340,9 +344,7 @@ namespace coanda
   void SIMPLE::initialize()
   {
     diag_F_inv.reinit(owned_partitioning[0], mpi_communicator);
-
     tmp.reinit(owned_partitioning, mpi_communicator);
-    //tmp = 0;
   }
 
 
@@ -351,14 +353,15 @@ namespace coanda
 
   void SIMPLE::assemble()
   {
-    // Initialize the sparsity pattern before the first call. This is done
-    // here instead of in initialize() because the jacobian is not ready
-    // before that.
+    /* Initialize the sparsity pattern before the first call. This is done here instead of in initialize() because
+     * the jacobian is not ready before that. */
     initialize_schur();
     initialize();
 
+
     const unsigned int start = diag_F_inv.local_range().first;
     const unsigned int end = diag_F_inv.local_range().second;
+
 
     for (unsigned int j = start; j < end; ++j)
     {
@@ -366,8 +369,8 @@ namespace coanda
       diag_F_inv(j) = 1.0 / (*jacobian_matrix).block(0, 0).diag_element(j);
     }
 
-    diag_F_inv.compress(VectorOperation::insert);
 
+    diag_F_inv.compress(VectorOperation::insert);
     schur_complement(approximate_schur, (*jacobian_matrix), diag_F_inv);
   }
 
@@ -389,7 +392,12 @@ namespace coanda
 
     SolverControl Schur_inv_control(approximate_schur.m(), 1e-4 * tmp.block(1).l2_norm());
     PETScWrappers::SolverGMRES Schur_solver(Schur_inv_control, mpi_communicator);
-    PETScWrappers::PreconditionBoomerAMG Schur_inv_preconditioner(mpi_communicator, PETScWrappers::PreconditionBoomerAMG::AdditionalData{});
+
+
+    PETScWrappers::PreconditionBoomerAMG Schur_inv_preconditioner(
+                                                                  mpi_communicator,
+                                                                  PETScWrappers::PreconditionBoomerAMG::AdditionalData{}
+                                                                  );
     Schur_inv_preconditioner.initialize(approximate_schur);
 
 
@@ -401,9 +409,7 @@ namespace coanda
     dst.block(1) = solution;
 
 
-    // In case of defective flow BC treatment the Navier-Stokes system matrix
-    // has an extra block associated with the Lagrange multipliers (n_blocks=3).
-    // Thus, in case of defective flow BCs we add an extra identity block.
+    // In case of defective flow BC treatment
     if (src.n_blocks() == 3) 
       dst.block(2) = src.block(2);
   }
@@ -483,24 +489,30 @@ namespace coanda
     {
       TimerOutput::Scope timer_section(timer, "CG for Mp");
 
+
       SolverControl mp_control(src.block(1).size(), 1e-6 * src.block(1).l2_norm());
       PETScWrappers::SolverCG solver(mp_control, pressure_mass_matrix->get_mpi_communicator());
 
+
       PETScWrappers::PreconditionBlockJacobi Mp_preconditioner;
       Mp_preconditioner.initialize(*pressure_mass_matrix);
+
 
       dst.block(1) = 0.0;
       solver.solve((*pressure_mass_matrix), dst.block(1), src.block(1), Mp_preconditioner);
       dst.block(1) *= -(viscosity + gamma);
     }
 
+
     {
       TimerOutput::Scope timer_section(timer, "MUMPS for A");
       
+
       jacobian_matrix->block(0, 1).vmult(utmp, dst.block(1));
       utmp *= -1.0;
       utmp += src.block(0);
-      
+
+
       A_solver.solve(jacobian_matrix->block(0,0), dst.block(0), utmp);
     }
   }
@@ -514,24 +526,25 @@ namespace coanda
   {
     public:
     NS(
-      const double theta,
-      const bool adaptive_refinement,
-      const bool adaptive_refinement_after_continuation,
-      const bool use_continuation,
       const bool distort_mesh,
-      const unsigned int fe_degree,
-      const double stopping_criterion,
+      const bool adaptive_refinement,
       const unsigned int n_glob_ref,
+      const unsigned int fe_degree,
       const unsigned int jacobian_update_step,
-      const double gamma,
+      const double theta,
+      const double viscosity,
+      const double stopping_criterion,
       const double time_end,
       const double delta_t,
       const double output_interval,
       const double refinement_interval,
-      const double viscosity,
-      const double viscosity_begin_continuation, // not necessary to pass this if continuation is not used
-      const double continuation_step_size // same as in the previous line
+      const bool use_continuation, // none of the following arguments needs to be passed if continuation is not used
+      const bool adaptive_refinement_after_continuation = false,
+      const double gamma = 0.0,
+      const double viscosity_begin_continuation = 0.0,
+      const double continuation_step_size = 0.0
       );
+
 
     void run();
 
@@ -539,21 +552,36 @@ namespace coanda
 
 
     private:
+
      
     void make_grid();
-
     void setup_dofs();
     void setup_system();
 
-    void assemble(const bool first_iteration, const bool assemble_jacobian, const bool steady_system=false); // assemble both jacobian and residual
+
+    void assemble(
+                  const bool first_iteration,
+                  const bool assemble_jacobian,
+                  const bool steady_system=false
+                  ); // assemble both jacobian and residual
+
+    
     void assemble_system(const bool first_iteration, const bool steady_system=false);
     void assemble_rhs(const bool first_iteration, const bool steady_system=false);
 
+
     void solve(const bool first_iteration, const bool steady_system=false);
 
-    void refine_mesh(const unsigned int min_grid_level, const unsigned int max_grid_level, const bool is_before_time_stepping=false);
+
+    void refine_mesh(
+                    const unsigned int min_grid_level,
+                    const unsigned int max_grid_level,
+                    const bool is_before_time_stepping=false
+                    );
+    
 
     void output_results(const unsigned int output_index, const bool output_steady_solution=false) const;
+
 
     void newton_iteration(
                           PETScWrappers::MPI::BlockVector &dst,
@@ -567,31 +595,37 @@ namespace coanda
     
 
     MPI_Comm mpi_communicator;
-    const double theta;
-    const bool adaptive_refinement;
-    const bool adaptive_refinement_after_continuation;
-    const bool use_continuation;
+
     const bool distort_mesh; // done following https://www.dealii.org/current/doxygen/deal.II/step_49.html
-    const unsigned int fe_degree; // added wrt step 57
-    const double stopping_criterion; // same
+    const bool adaptive_refinement;
     const unsigned int n_glob_ref;
+    const unsigned int fe_degree;
     const unsigned int jacobian_update_step;
-    const double gamma;
+    const double theta;
     double viscosity;
+    const double stopping_criterion;
+    const bool use_continuation;
+    const bool adaptive_refinement_after_continuation;
+    const double gamma;
     const double viscosity_begin_continuation;
     const double continuation_step_size;
-
+    
+    
     parallel::distributed::Triangulation<dim> triangulation;
     FESystem<dim> fe;
     DoFHandler<dim> dof_handler;
 
+
     QGauss<dim> quad_formula;
     QGauss<dim-1> face_quad_formula;
+
 
     AffineConstraints<double> zero_constraints;
     AffineConstraints<double> nonzero_constraints;
 
+
     BlockSparsityPattern sparsity_pattern;
+
 
     PETScWrappers::MPI::BlockSparseMatrix jacobian_matrix;
     PETScWrappers::MPI::SparseMatrix pressure_mass_matrix;
@@ -604,17 +638,21 @@ namespace coanda
     PETScWrappers::MPI::BlockVector newton_update;
     PETScWrappers::MPI::BlockVector system_rhs;
 
+
     ConditionalOStream pcout;
     std::vector<types::global_dof_index> dofs_per_block;
     std::vector<IndexSet> owned_partitioning;
     std::vector<IndexSet> relevant_partitioning;
     IndexSet locally_relevant_dofs;
 
+
     Time time;
     mutable TimerOutput timer;
 
+
     std::shared_ptr<SIMPLE> preconditioner;
     std::shared_ptr<BlockSchurPreconditioner> steady_preconditioner;
+
 
     std::vector<double> relative_distances;
     std::vector<double> residuals_at_first_iteration;
@@ -626,36 +664,36 @@ namespace coanda
 
   template <int dim>
   NS<dim>::NS(
-              const double theta,
-              const bool adaptive_refinement,
-              const bool adaptive_refinement_after_continuation,
-              const bool use_continuation,
               const bool distort_mesh,
-              const unsigned int fe_degree,
-              const double stopping_criterion,
+              const bool adaptive_refinement,
               const unsigned int n_glob_ref,
+              const unsigned int fe_degree,
               const unsigned int jacobian_update_step,
-              const double gamma,
+              const double theta,
+              const double viscosity,
+              const double stopping_criterion,
               const double time_end,
               const double delta_t,
               const double output_interval,
               const double refinement_interval,
-              const double viscosity,
+              const bool use_continuation,
+              const bool adaptive_refinement_after_continuation,
+              const double gamma,
               const double viscosity_begin_continuation,
               const double continuation_step_size
               )
     : mpi_communicator(MPI_COMM_WORLD),
-      theta(theta),
-      adaptive_refinement(adaptive_refinement),
-      adaptive_refinement_after_continuation(adaptive_refinement_after_continuation),
-      use_continuation(use_continuation),
       distort_mesh(distort_mesh),
-      fe_degree(fe_degree),
-      stopping_criterion(stopping_criterion),
+      adaptive_refinement(adaptive_refinement),
       n_glob_ref(n_glob_ref),
+      fe_degree(fe_degree),
       jacobian_update_step(jacobian_update_step),
-      gamma(gamma),
+      theta(theta),
       viscosity(viscosity),
+      stopping_criterion(stopping_criterion),
+      use_continuation(use_continuation),
+      adaptive_refinement_after_continuation(adaptive_refinement_after_continuation),
+      gamma(gamma),
       viscosity_begin_continuation(viscosity_begin_continuation),
       continuation_step_size(continuation_step_size),
       triangulation(mpi_communicator,
@@ -696,7 +734,8 @@ namespace coanda
     }
     
 
-    if (n_glob_ref > 0) { rectangle.refine_global(n_glob_ref); } // explain why it is here
+    if (n_glob_ref > 0)
+      rectangle.refine_global(n_glob_ref);
 
 
     std::set<typename Triangulation<dim>::active_cell_iterator> cells_to_remove;
@@ -716,7 +755,6 @@ namespace coanda
         { 
           if (before_10_x_coord && first_check)
             inside_domain = false; // if dim==2, it is a sufficient condition to be in the inlet
-          
         }
         else // otherwise we need to check also the z component
         {
@@ -754,7 +792,8 @@ namespace coanda
     }
 
 
-    if (distort_mesh) { GridTools::distort_random(0.05, triangulation, true); }
+    if (distort_mesh)
+      GridTools::distort_random(0.1, triangulation, true);
 
 
     std::ofstream out("mesh.vtk");
@@ -774,29 +813,37 @@ namespace coanda
     preconditioner.reset();
     steady_preconditioner.reset();
 
+
     dof_handler.distribute_dofs(fe);
+
 
     std::vector<unsigned int> block_component(dim + 1, 0);
     block_component[dim] = 1;
     DoFRenumbering::component_wise(dof_handler, block_component);
 
+
     dofs_per_block = DoFTools::count_dofs_per_fe_block(dof_handler, block_component);
     unsigned int dof_u = dofs_per_block[0];
     unsigned int dof_p = dofs_per_block[1];
+
 
     owned_partitioning.resize(2);
     owned_partitioning[0] = dof_handler.locally_owned_dofs().get_view(0, dof_u);
     owned_partitioning[1] = dof_handler.locally_owned_dofs().get_view(dof_u, dof_u + dof_p);
     locally_relevant_dofs = DoFTools::extract_locally_relevant_dofs(dof_handler);
 
+
     relevant_partitioning.resize(2);
     relevant_partitioning[0] = locally_relevant_dofs.get_view(0, dof_u);
     relevant_partitioning[1] = locally_relevant_dofs.get_view(dof_u, dof_u + dof_p);
+
     
     pcout << "---" << "Number of active fluid cells: " << triangulation.n_global_active_cells() << std::endl;
     pcout << "---" << "Number of degrees of freedom: " << dof_handler.n_dofs() << " (" << dof_u << '+' << dof_p << ")" << std::endl;
 
+
     const FEValuesExtractors::Vector velocities(0);
+
 
     {
       nonzero_constraints.clear();
@@ -805,8 +852,10 @@ namespace coanda
       nonzero_constraints.reinit(locally_relevant_dofs);
       zero_constraints.reinit(locally_relevant_dofs);
 
+
       // Apply Dirichlet boundary conditions on all Dirichlet boundaries except for the outlet.
       std::vector<unsigned int> dirichlet_bc_ids{1, 3};
+
 
       for (auto id : dirichlet_bc_ids)
       {
@@ -827,8 +876,10 @@ namespace coanda
                                                 );
       }
 
+
       DoFTools::make_hanging_node_constraints(dof_handler, nonzero_constraints);
       DoFTools::make_hanging_node_constraints(dof_handler, zero_constraints);
+
 
       nonzero_constraints.close();
       zero_constraints.close();
@@ -846,12 +897,14 @@ namespace coanda
     DoFTools::make_sparsity_pattern(dof_handler, dsp, nonzero_constraints);
     sparsity_pattern.copy_from(dsp);
 
+
     SparsityTools::distribute_sparsity_pattern(
                                               dsp,
                                               dof_handler.locally_owned_dofs(),
                                               mpi_communicator,
                                               locally_relevant_dofs
                                               );
+
       
     jacobian_matrix.reinit(owned_partitioning, dsp, mpi_communicator);
     pressure_mass_matrix.reinit(owned_partitioning[1], dsp.block(1, 1), mpi_communicator);
@@ -1386,12 +1439,12 @@ namespace coanda
     const double target_viscosity{viscosity};
     const bool steady_system{true};
     const unsigned int n_max_iter{50};
-    const double tol{1e-7};
+    const double tol{1e-8};
  
     for (double mu = viscosity_begin_continuation; mu >= target_viscosity; mu -= continuation_step_size)
     {
       viscosity = mu;
-      pcout << std::string(20, '-') << " Searching for initial guess with mu = " << mu << " " << std::string(20, '-') << std::endl;
+      pcout << "\n" << std::string(20, '-') << " Searching for initial guess with mu = " << mu << " " << std::string(20, '-') << "\n" << std::endl;
 
       newton_iteration(steady_solution, tol, n_max_iter, is_initial_step, steady_system);
       
@@ -1405,7 +1458,6 @@ namespace coanda
 
     if (adaptive_refinement_after_continuation)
       refine_mesh(0, 2, adaptive_refinement_after_continuation); // if it is true, we can pass it as is_before_time_stepping=true
-
   }
 
 
@@ -1449,7 +1501,7 @@ namespace coanda
       time.increment();
       std::cout.precision(6);
       std::cout.width(12);
-      pcout << std::string(20, '-') << " Time step = " << time.get_timestep() << ", at t = " << std::scientific << time.current() << " " << std::string(20, '-') << std::endl;
+      pcout << "\n" << std::string(20, '-') << " Time step = " << time.get_timestep() << ", at t = " << std::scientific << time.current() << " " << std::string(20, '-') << "\n" << std::endl;
       
       const bool steady_system{false};
       const double nonlinear_tolerance(1e-9);
@@ -1489,11 +1541,8 @@ namespace coanda
       }
 
       // Refinement
-      if (time.time_to_refine())
-      {
-        if (adaptive_refinement) 
-          refine_mesh(0, 2);
-      }
+      if (time.time_to_refine() && adaptive_refinement)
+        refine_mesh(0, 2);
     }
 
     const std::string filename1{"residual_first_iteration.csv"};
@@ -1502,7 +1551,7 @@ namespace coanda
     save_vector(residuals_at_first_iteration, filename1);
     save_vector(relative_distances, filename2);
   }
-}
+} // NAMESPACE COANDA
 
 
 
@@ -1522,53 +1571,51 @@ int main(int argc, char *argv[])
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
 
     
-    const double theta{0.5}; // using the trapezoidal rule to integrate in time
-    const bool adaptive_refinement{true};
-    const bool adaptive_refinement_after_continuation{true};
-
-
-    const bool use_continuation{false};
     const bool distort_mesh{false};
+    const bool adaptive_refinement{true};
 
 
-    const unsigned int fe_degree{1};
-    const double stopping_criterion{1e-12};
     const unsigned int n_glob_ref{1};
+    const unsigned int fe_degree{1};
+    const unsigned int jacobian_update_step{3};
 
 
-    const unsigned int jacobian_update_step{4};
-    const double gamma{1.0};
+    const double viscosity{0.5};
+    const double theta{0.5};
+    const double stopping_criterion{1e-7};
+    
 
-
-    const double time_end{60};
+    const double time_end{25};
     const double delta_t{1e-2};
     const double output_interval{1e-1};
     const double refinement_interval{1e-1};
 
 
-    const double viscosity{0.5};
+    const bool use_continuation{false};
+    const bool adaptive_refinement_after_continuation{true};
+    const double gamma{1.0};
     const double viscosity_begin_continuation{0.51};
     const double continuation_step_size{1e-2};
     
 
     NS<2> bifurc_NS{
-                    theta,
-                    adaptive_refinement,
-                    adaptive_refinement_after_continuation,
-                    use_continuation,
                     distort_mesh,
-                    fe_degree,
-                    stopping_criterion,
+                    adaptive_refinement,
                     n_glob_ref,
+                    fe_degree,
                     jacobian_update_step,
-                    gamma,
+                    theta,
+                    viscosity,
+                    stopping_criterion,
                     time_end,
                     delta_t,
                     output_interval,
                     refinement_interval,
-                    viscosity,
+                    use_continuation,
+                    adaptive_refinement_after_continuation,
+                    gamma,
                     viscosity_begin_continuation,
-                    continuation_step_size
+                    continuation_step_size,
                   };
 
 

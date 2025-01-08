@@ -12,30 +12,9 @@ We begin by including all the necessary files:
 #include <deal.II/base/utilities.h>
 
 
-#include <deal.II/lac/affine_constraints.h>
-#include <deal.II/lac/dynamic_sparsity_pattern.h>
-#include <deal.II/lac/full_matrix.h>
-#include <deal.II/lac/precondition.h>
-#include <deal.II/lac/solver_control.h>
-#include <deal.II/lac/solver_gmres.h>
-#include <deal.II/lac/sparsity_tools.h>
-
-
-#include <deal.II/lac/petsc_block_sparse_matrix.h>
-#include <deal.II/lac/petsc_solver.h>
-#include <deal.II/lac/petsc_sparse_matrix.h>
-#include <deal.II/lac/petsc_precondition.h>
-#include <deal.II/lac/petsc_vector.h>
-
-
-#include <deal.II/grid/grid_generator.h>
-#include <deal.II/grid/grid_refinement.h>
-#include <deal.II/grid/grid_tools.h>
-#include <deal.II/grid/grid_out.h>
-#include <deal.II/grid/manifold_lib.h>
-#include <deal.II/grid/tria.h>
-#include <deal.II/grid/tria_accessor.h>
-#include <deal.II/grid/tria_iterator.h>
+#include <deal.II/distributed/grid_refinement.h>
+#include <deal.II/distributed/solution_transfer.h>
+#include <deal.II/distributed/tria.h>
 
 
 #include <deal.II/dofs/dof_accessor.h>
@@ -49,15 +28,35 @@ We begin by including all the necessary files:
 #include <deal.II/fe/fe_values.h>
 
 
+#include <deal.II/grid/grid_generator.h>
+#include <deal.II/grid/grid_refinement.h>
+#include <deal.II/grid/grid_tools.h>
+#include <deal.II/grid/grid_out.h>
+#include <deal.II/grid/manifold_lib.h>
+#include <deal.II/grid/tria.h>
+#include <deal.II/grid/tria_accessor.h>
+#include <deal.II/grid/tria_iterator.h>
+
+
+#include <deal.II/lac/affine_constraints.h>
+#include <deal.II/lac/dynamic_sparsity_pattern.h>
+#include <deal.II/lac/full_matrix.h>
+#include <deal.II/lac/precondition.h>
+#include <deal.II/lac/solver_control.h>
+#include <deal.II/lac/solver_gmres.h>
+#include <deal.II/lac/sparsity_tools.h>
+
+#include <deal.II/lac/petsc_block_sparse_matrix.h>
+#include <deal.II/lac/petsc_solver.h>
+#include <deal.II/lac/petsc_sparse_matrix.h>
+#include <deal.II/lac/petsc_precondition.h>
+#include <deal.II/lac/petsc_vector.h>
+
+
 #include <deal.II/numerics/data_out.h>
 #include <deal.II/numerics/error_estimator.h>
 #include <deal.II/numerics/matrix_tools.h>
 #include <deal.II/numerics/vector_tools.h>
-
-
-#include <deal.II/distributed/grid_refinement.h>
-#include <deal.II/distributed/solution_transfer.h>
-#include <deal.II/distributed/tria.h>
 
 
 #include <fstream>
@@ -101,7 +100,8 @@ The vectors are saved in .csv format.
 
     catch (const std::exception& e)
     {
-      std::cerr << "It was not possible to save the vector to a file named " << filename << ". Error: " << e.what() << std::endl;
+      std::cerr << "It was not possible to save the vector to a file named "
+                << filename << ". Error: " << e.what() << std::endl;
     }
   }
 ```
@@ -196,9 +196,10 @@ The following function will be used to define the boundary conditions.
 
 
 ```
-The boundary values function is defined as follows. Both in 2D and in 3D its values can be different from $0$ only in the inlet part of the boundary $\Gamma_{\text{inlet}}$.
+The boundary values function is defined as follows.
+Both in 2D and in 3D its values can be different from $0$ only in the inlet part of the boundary $\Gamma_{\text{inlet}}$.
 
-In order to ensure continuity of the boundary conditions, a parabolic inflow condition is imposed in 2D, and here I made the choice to impose a 4-th degree inflow condition in 3D.
+In order to ensure continuity of the boundary conditions, a parabolic inflow condition is imposed in 2D; here, for the same reason, I made the choice to impose a 4-th degree inflow condition in 3D.
 
 In both cases, it is done in such a way that the boundary values function vanishes on the part of the boundary which is shared among the inlet and the walls.
 
@@ -244,7 +245,6 @@ $$
 
     return 0;
   }
-
 ```
 ## Preconditioners
 
@@ -324,7 +324,7 @@ We can then compute the Schur complement:
     dst.add(-1.0, src.block(1, 1));
   }
 ```
-The following class is a declaration of the SIMPLE preconditioner:
+The following class is a declaration of the SIMPLE preconditioner. All the matrices and vectors which are going to be needed, as well as the owned and relevant partitioning, are saved within the class.
 ```cpp
   class SIMPLE : public Subscriptor
   {
@@ -335,10 +335,9 @@ The following class is a declaration of the SIMPLE preconditioner:
           const std::vector<IndexSet> &owned_partitioning,
           const std::vector<IndexSet> &relevant_partitioning,
           const PETScWrappers::MPI::BlockSparseMatrix &jacobian_matrix
-    );
+          );
 
-    
-    // class methods
+
     void initialize_schur();
     void initialize();
     void assemble();
@@ -350,26 +349,31 @@ The following class is a declaration of the SIMPLE preconditioner:
       vmult_U(dst, tmp);
     }
 
-
-
+  
     private:
     void vmult_L(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const;
     void vmult_U(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const;
 
 
-
-    // class attributes
     MPI_Comm mpi_communicator;
     TimerOutput &timer;
 
     const std::vector<IndexSet> &owned_partitioning;
     const std::vector<IndexSet> &relevant_partitioning;
 
-    const SmartPointer<const PETScWrappers::MPI::BlockSparseMatrix> jacobian_matrix; // pointer to the system matrix
+    const SmartPointer<const PETScWrappers::MPI::BlockSparseMatrix> jacobian_matrix;
     PETScWrappers::MPI::SparseMatrix approximate_schur;
 
     mutable PETScWrappers::MPI::BlockVector tmp;
     PETScWrappers::MPI::Vector diag_F_inv;
+```
+Here we also save a `PETScWrappers::SparseDirectMUMPS` object: while the choice to use a direct solver might seem counterintuitive when using parallelization and/or with systems with a large number of degrees of freedom, there a couple of reasons for this:
+- Iterative solvers, at least in this case, tend to perform extremely poorly on $F$, making the use of preconditioners too expensive from a computational point of view; 
+- Since the Jacobian matrix is not updated at each step (more on that in the following), we need to solve various linear systems with the same matrix. Therefore it might make sense to compute its factorization once and then use it to solve multiple linear systems;
+- The number of DOFs considered in this script (at least in the 2D case) is still moderate, i.e. around 10.000/20.000 DOFs, making the advantage of iterative methods less evident.
+```cpp
+    SolverControl tmp_solver_control; // used just to initialize F_solver 
+    mutable PETScWrappers::SparseDirectMUMPS F_solver;
   };
 ```
 The constructor just initializes a temporary vector which is going to be needed in the following.
@@ -383,7 +387,8 @@ The constructor just initializes a temporary vector which is going to be needed 
     timer(timer),
     owned_partitioning(owned_partitioning),
     relevant_partitioning(relevant_partitioning),
-    jacobian_matrix(&jacobian_matrix)
+    jacobian_matrix(&jacobian_matrix),
+    F_solver(tmp_solver_control, (this->jacobian_matrix->block(0,0)).get_mpi_communicator())
   { 
     tmp.reinit(owned_partitioning, mpi_communicator);
   }
@@ -408,9 +413,7 @@ The following functions are needed to initialize and assemble the Schur compleme
   void SIMPLE::initialize()
   {
     diag_F_inv.reinit(owned_partitioning[0], mpi_communicator);
-
     tmp.reinit(owned_partitioning, mpi_communicator);
-    //tmp = 0;
   }
 
 
@@ -419,14 +422,15 @@ The following functions are needed to initialize and assemble the Schur compleme
 
   void SIMPLE::assemble()
   {
-    // Initialize the sparsity pattern before the first call. This is done
-    // here instead of in initialize() because the jacobian is not ready
-    // before that.
+    /* Initialize the sparsity pattern before the first call. This is done here instead of in initialize() because
+     * the jacobian is not ready before that. */
     initialize_schur();
     initialize();
 
+
     const unsigned int start = diag_F_inv.local_range().first;
     const unsigned int end = diag_F_inv.local_range().second;
+
 
     for (unsigned int j = start; j < end; ++j)
     {
@@ -434,8 +438,8 @@ The following functions are needed to initialize and assemble the Schur compleme
       diag_F_inv(j) = 1.0 / (*jacobian_matrix).block(0, 0).diag_element(j);
     }
 
-    diag_F_inv.compress(VectorOperation::insert);
 
+    diag_F_inv.compress(VectorOperation::insert);
     schur_complement(approximate_schur, (*jacobian_matrix), diag_F_inv);
   }
 ```
@@ -445,34 +449,30 @@ The following functions are the ones needed to implement `vmult`, i.e. multiplic
 
   void SIMPLE::vmult_L(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const
   {
-    TimerOutput::Scope timer_section(timer, "GMRES for preconditioner");
+    TimerOutput::Scope timer_section(timer, "vmult_L");
 
 
-    SolverControl F_inv_control((*jacobian_matrix).block(0, 0).m(), 1e-4 * src.block(0).l2_norm());
-    PETScWrappers::SolverGMRES F_solver(F_inv_control, jacobian_matrix->get_mpi_communicator());
+    F_solver.solve((*jacobian_matrix).block(0, 0), dst.block(0), src.block(0)); // d0 = F^{-1} * s0
 
 
-    PETScWrappers::PreconditionBoomerAMG F_inv_preconditioner(mpi_communicator, PETScWrappers::PreconditionBoomerAMG::AdditionalData{});
-    F_inv_preconditioner.initialize(jacobian_matrix->block(0, 0));
-
-    F_solver.solve((*jacobian_matrix).block(0, 0), dst.block(0), src.block(0), F_inv_preconditioner); // d0 = F^{-1} * s0
     (*jacobian_matrix).block(1, 0).vmult(tmp.block(1), dst.block(0)); // t1 = (-B) * d0
-
-
     tmp.block(1).add(-1.0, src.block(1)); // t1 -= s1
+
+
     SolverControl Schur_inv_control(approximate_schur.m(), 1e-4 * tmp.block(1).l2_norm());
     PETScWrappers::SolverGMRES Schur_solver(Schur_inv_control, mpi_communicator);
 
-
-    PETScWrappers::PreconditionBoomerAMG Schur_inv_preconditioner(mpi_communicator, PETScWrappers::PreconditionBoomerAMG::AdditionalData{});
+    
+    PETScWrappers::PreconditionBoomerAMG Schur_inv_preconditioner(
+                                                                  mpi_communicator,
+                                                                  PETScWrappers::PreconditionBoomerAMG::AdditionalData{}
+                                                                  );
     Schur_inv_preconditioner.initialize(approximate_schur);
 
 
-    // Schur_solver.solve(approximate_schur, dst.block(1), tmp.block(1), Schur_inv_preconditioner); // d1 = (-Sigma^{-1}) * t1
-    // this throws an error: the initial guess can't be empty
-    
     PETScWrappers::MPI::Vector solution(dst.block(1));
     solution = 0.0;
+
 
     Schur_solver.solve(approximate_schur, solution, tmp.block(1), Schur_inv_preconditioner); // d1 = (-Sigma^{-1}) * t1
     dst.block(1) = solution;
@@ -498,8 +498,6 @@ The following functions are the ones needed to implement `vmult`, i.e. multiplic
     if (src.n_blocks() == 3) 
       dst.block(2) = src.block(2);
   }
-
-
 ```
 ### The `BlockSchurPreconditioner`
 Recall that, in addition to solving the unsteady problem, if we use the previously introduced continuation algorithm, then we also need to solve the steady Navier-Stokes equations.
@@ -508,8 +506,8 @@ To do that, a different preconditioner with respect to SIMPLE needs to be implem
 
 My choice was to stick to the one presented in the `deal.II` tutorial [step 57](https://www.dealii.org/current/doxygen/deal.II/step_57.html), modifying it in order to make it compatible with execution using MPI.
 
-However, since a direct solver is used for the $\tilde{A}$ matrix (specifically, PETSc MUMPs), there might be no advantages using parallelization.
-The choice to use a direct solver (in line with what was done in step 57) stems from the difficulty to find good preconditioners for the system, as well as from the fact that for small systems (as in this case, consisting in 10.000-20.000) DOFs the performance gain using an iterative solver and MPI is often negligible, if present.
+However, and similarly to the case of SIMPLE, since a direct solver is used for the $\tilde{A}$ matrix (specifically, PETSc MUMPs), there might be no advantages using parallelization.
+Also in this situation, the choice to use a direct solver (in line with what was done in step 57) stems from the difficulty to find good preconditioners for the system, as well as from the fact that for relatively small systems the performance gain using an iterative solver and MPI is often negligible, if present.
 
 Since no other novelties with respect to step 57 are introduced, no further comments are provided on this topic, and we refer the interested reader to the aforementioned tutorial and the references therein.
 
@@ -533,12 +531,13 @@ Since no other novelties with respect to step 57 are introduced, no further comm
   
     const SmartPointer<const PETScWrappers::MPI::BlockSparseMatrix> jacobian_matrix;
     const SmartPointer<PETScWrappers::MPI::SparseMatrix> pressure_mass_matrix;
+
+    SolverControl tmp_solver_control;
+    mutable PETScWrappers::SparseDirectMUMPS A_solver;
   };
-  
-
-
-  // Constructor
-
+```
+The constructor does not really do anything apart from initializing the attributes of the class:
+```cpp
   BlockSchurPreconditioner::BlockSchurPreconditioner(
                                                     TimerOutput &timer,
                                                     const double gamma,
@@ -550,13 +549,13 @@ Since no other novelties with respect to step 57 are introduced, no further comm
       gamma(gamma),
       viscosity(viscosity),
       jacobian_matrix(&jacobian_matrix),
-      pressure_mass_matrix(&pressure_mass_matrix)
+      pressure_mass_matrix(&pressure_mass_matrix),
+      tmp_solver_control(this->jacobian_matrix->block(0,0).m(), 1e-6),
+      A_solver(tmp_solver_control, (this->jacobian_matrix->block(0,0)).get_mpi_communicator())
   {}
-
-
-
-  // vmult
-
+```
+Of course, the vmult operation is implemented:
+```cpp
   void BlockSchurPreconditioner::vmult(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const
   {
     PETScWrappers::MPI::Vector utmp(src.block(0));
@@ -565,31 +564,31 @@ Since no other novelties with respect to step 57 are introduced, no further comm
     {
       TimerOutput::Scope timer_section(timer, "CG for Mp");
 
+
       SolverControl mp_control(src.block(1).size(), 1e-6 * src.block(1).l2_norm());
       PETScWrappers::SolverCG solver(mp_control, pressure_mass_matrix->get_mpi_communicator());
 
+
       PETScWrappers::PreconditionBlockJacobi Mp_preconditioner;
       Mp_preconditioner.initialize(*pressure_mass_matrix);
+
 
       dst.block(1) = 0.0;
       solver.solve((*pressure_mass_matrix), dst.block(1), src.block(1), Mp_preconditioner);
       dst.block(1) *= -(viscosity + gamma);
     }
 
+
     {
-      TimerOutput::Scope timer_section(timer, "GMRES for A");
+      TimerOutput::Scope timer_section(timer, "MUMPS for A");
       
+
       jacobian_matrix->block(0, 1).vmult(utmp, dst.block(1));
       utmp *= -1.0;
       utmp += src.block(0);
 
-      SolverControl A_control(src.block(0).size(), 1e-3 * utmp.l2_norm());
-      PETScWrappers::SolverGMRES A_solver(A_control, (jacobian_matrix->block(0,0)).get_mpi_communicator());
-
-      PETScWrappers::PreconditionNone A_preconditioner;
-      A_preconditioner.initialize(jacobian_matrix->block(0,0));
-
-      A_solver.solve(jacobian_matrix->block(0,0), dst.block(0), utmp, A_preconditioner);
+      
+      A_solver.solve(jacobian_matrix->block(0,0), dst.block(0), utmp);
     }
   }
 ```
@@ -600,19 +599,22 @@ This is the declaration of the Navier-Stokes class.
 
 ## An overview of the data to be passed to the constructor
 The constructor takes the following inputs:
-- `theta` is the parameter $\theta$ of the $\theta$-method, and it is here chosen as $\frac{1}{2}$, due to the fact that the trapezoidal rule is the only $\theta$-method$ with order to (and it is also A-stable);
-- `adaptive_refinement` is a flag which specifies whether the mesh should be refined adaptively or not;
-- `use_continuation` is a flag which specifies whether the continuation algorithm should be used;
 - `distort_mesh` is a flag which specifies whether mesh should be distorder (see [step 49](https://www.dealii.org/current/doxygen/deal.II/step_49.html)), which in many situations can be crucial in order to observe the bifurcating behaviour of the solution;
+- `adaptive_refinement` is a flag which specifies whether the mesh should be refined adaptively or not;
+- `n_glob_ref` is the number of global refinement performed on the initial mesh;
 - `fe_degree` is the degree used for the pressure space. Since we are using Taylor-Hood pairs, the degree used for the velocity one is going to be `fe_degree` $+1$;
--`stopping_criterion` is the threshold $\tau$ used to check if $\displaystyle\frac{\|\boldsymbol{u}^{n+1}-\boldsymbol{u}^{n}\|_2}{\|\boldsymbol{u}^{n}\|_2}<\tau$ and, in that case, stop the simulation;
--`n_glob_ref` is the number of global refinement performed on the initial mesh;
--`jacobian_update_step` is the step used for updating the Jacobian in the (quasi)-Newon method;
+- `jacobian_update_step` is the step used for updating the Jacobian in the (quasi)-Newon method;
+- `theta` is the parameter $\theta$ of the $\theta$-method, and it is here chosen as $\frac{1}{2}$, due to the fact that the trapezoidal rule is the only $\theta$-method$ with order to (and it is also A-stable);
+- `viscosity` is the value of $\mu$ for which we want to perform a simulation;
+- `stopping_criterion` is the threshold $\tau$ used to check if $\displaystyle\frac{\|\boldsymbol{u}^{n+1}-\boldsymbol{u}^{n}\|_2}{\|\boldsymbol{u}^{n}\|_2}<\tau$ and, in that case, stop the simulation;
+- `time_end`, `delta_t`, `output_interval`, and `refinement_interval` are the inputs given to the constructor of the `Time` class;
+- `use_continuation` is a flag which specifies whether the continuation algorithm should be used;
+- `adaptive_refinement` is a flag which specifies whether the mesh should be refined adaptively or not (estimating the error using the solution obtained by means of the continuation algorithm);
 -`gamma` is a stabilization paramter used in the steady case, following exactly what was done in step 57;
--`time_end`, `delta_t`, `output_interval`, and `refinement_interval` are the inputs given to the constructor of the `Time` class;
--`viscosity` is the value of $\mu$ for which we want to perform a simulation;
 -`viscosity_begin_continuation` is the (optional) parameter denoting the right-handside of the interval used for continuation;
 -`continuation_step_size` is the (optional) stepsize used for continuation.
+
+Default values are provided for all the parameters which are not needed if continuation is not used.
 
 ## An overview of the attributes of the class
 In addition to the inputs passed to the constructor, the class also saves the objects needed for a distributed FE solver (the triangulation, the DOF handler, a finite element system object, the sparsity pattern of the Jacobian matrix, shared pointer pointing to the preconditioners, and so on).
@@ -627,34 +629,37 @@ Various vectors are stored, namely:
 - `evaluation_points`, used for technical reasons explained below;
 - `system_rhs`, pretty self-explanatory.
 
+
 Lastly, two `AffineConstraints<double>` are saved: `nonzero_constraints` is used just during the first call of Newton's method, and it imposes the correct boundary conditions on the output of the first iteration.
-After this phase, all the successive updates are equipped with zero Dirichlet boundary conditions using `zero_constraints`, meaning that their sum with a vector satisfying inhomogeneous DBCs will automatically satisfy the same DBCs.
+After this phase, all the successive updates $\delta u^k$ and $\delta p^k$ are equipped with zero Dirichlet boundary conditions using `zero_constraints`, meaning that their sum with a vector satisfying inhomogeneous DBCs will automatically satisfy the same DBCs.
+
 
 ## An overview of the methods of the class
 For readability reasons, the methods of the class are going to be discussed in detail in the following, after their declaration and before their definition.
 
 ```cpp
-  template <int dim>
+template <int dim>
   class NS
   {
     public:
     NS(
-      const double theta,
-      const bool adaptive_refinement,
-      const bool use_continuation,
       const bool distort_mesh,
-      const unsigned int fe_degree,
-      const double stopping_criterion,
+      const bool adaptive_refinement,
       const unsigned int n_glob_ref,
+      const unsigned int fe_degree,
       const unsigned int jacobian_update_step,
-      const double gamma,
+      const double theta,
+      const double viscosity,
+      const double stopping_criterion,
       const double time_end,
       const double delta_t,
       const double output_interval,
       const double refinement_interval,
-      const double viscosity,
-      const double viscosity_begin_continuation=0, // not necessary to pass this if continuation is not used
-      const double continuation_step_size=0 // same as in the previous line
+      const bool use_continuation, // none of the following arguments needs to be passed if continuation is not used
+      const bool adaptive_refinement_after_continuation = false,
+      const double gamma = 0.0,
+      const double viscosity_begin_continuation = 0.0,
+      const double continuation_step_size = 0.0
       );
 
 
@@ -663,23 +668,37 @@ For readability reasons, the methods of the class are going to be discussed in d
     ~NS() { timer.print_summary(); }
 
 
-
     private:
+    
      
     void make_grid();
-
     void setup_dofs();
     void setup_system();
 
-    void assemble(const bool first_iteration, const bool assemble_jacobian, const bool steady_system=false); // assemble both jacobian and residual
+
+    void assemble(
+                  const bool first_iteration,
+                  const bool assemble_jacobian,
+                  const bool steady_system=false
+                  ); // assemble both jacobian and residual
+
+    
     void assemble_system(const bool first_iteration, const bool steady_system=false);
     void assemble_rhs(const bool first_iteration, const bool steady_system=false);
 
+
     void solve(const bool first_iteration, const bool steady_system=false);
 
-    void refine_mesh(const unsigned int min_grid_level, const unsigned int max_grid_level);
+
+    void refine_mesh(
+                    const unsigned int min_grid_level,
+                    const unsigned int max_grid_level,
+                    const bool is_before_time_stepping=false
+                    );
+    
 
     void output_results(const unsigned int output_index, const bool output_steady_solution=false) const;
+
 
     void newton_iteration(
                           PETScWrappers::MPI::BlockVector &dst,
@@ -693,30 +712,37 @@ For readability reasons, the methods of the class are going to be discussed in d
     
 
     MPI_Comm mpi_communicator;
-    const double theta;
+
+    const bool distort_mesh;
     const bool adaptive_refinement;
-    const bool use_continuation;
-    const bool distort_mesh; // done following https://www.dealii.org/current/doxygen/deal.II/step_49.html
-    const unsigned int fe_degree; // added wrt step 57
-    const double stopping_criterion; // same
     const unsigned int n_glob_ref;
+    const unsigned int fe_degree;
     const unsigned int jacobian_update_step;
-    const double gamma;
+    const double theta;
     double viscosity;
+    const double stopping_criterion;
+    const bool use_continuation;
+    const bool adaptive_refinement_after_continuation;
+    const double gamma;
     const double viscosity_begin_continuation;
     const double continuation_step_size;
-
+    
+    
     parallel::distributed::Triangulation<dim> triangulation;
     FESystem<dim> fe;
     DoFHandler<dim> dof_handler;
 
+
     QGauss<dim> quad_formula;
-    QGauss<dim-1> face_quad_formula; // needed for Kelly estimator
+    QGauss<dim-1> face_quad_formula;
+
 
     AffineConstraints<double> zero_constraints;
     AffineConstraints<double> nonzero_constraints;
 
+
     BlockSparsityPattern sparsity_pattern;
+
 
     PETScWrappers::MPI::BlockSparseMatrix jacobian_matrix;
     PETScWrappers::MPI::SparseMatrix pressure_mass_matrix;
@@ -736,11 +762,14 @@ For readability reasons, the methods of the class are going to be discussed in d
     std::vector<IndexSet> relevant_partitioning;
     IndexSet locally_relevant_dofs;
 
+
     Time time;
     mutable TimerOutput timer;
 
+
     std::shared_ptr<SIMPLE> preconditioner;
     std::shared_ptr<BlockSchurPreconditioner> steady_preconditioner;
+
 
     std::vector<double> relative_distances;
     std::vector<double> residuals_at_first_iteration;
@@ -748,43 +777,45 @@ For readability reasons, the methods of the class are going to be discussed in d
 ```
 ## The constructor
 The constructor takes in input the aforementioned variables.
-Its only action is to call the `make_grid` method, which, unsurprisingly, creates the triangulation.
+Its only actions are to instantiate most of the attributes of the class, and to call the `make_grid` method, which (unsurprisingly) creates the triangulation.
 ```cpp
   template <int dim>
   NS<dim>::NS(
-              const double theta,
-              const bool adaptive_refinement,
-              const bool use_continuation,
               const bool distort_mesh,
-              const unsigned int fe_degree,
-              const double stopping_criterion,
+              const bool adaptive_refinement,
               const unsigned int n_glob_ref,
+              const unsigned int fe_degree,
               const unsigned int jacobian_update_step,
-              const double gamma,
+              const double theta,
+              const double viscosity,
+              const double stopping_criterion,
               const double time_end,
               const double delta_t,
               const double output_interval,
               const double refinement_interval,
-              const double viscosity,
+              const bool use_continuation,
+              const bool adaptive_refinement_after_continuation,
+              const double gamma,
               const double viscosity_begin_continuation,
               const double continuation_step_size
               )
     : mpi_communicator(MPI_COMM_WORLD),
-      theta(theta),
-      adaptive_refinement(adaptive_refinement),
-      use_continuation(use_continuation),
       distort_mesh(distort_mesh),
-      fe_degree(fe_degree),
-      stopping_criterion(stopping_criterion),
+      adaptive_refinement(adaptive_refinement),
       n_glob_ref(n_glob_ref),
+      fe_degree(fe_degree),
       jacobian_update_step(jacobian_update_step),
-      gamma(gamma),
+      theta(theta),
       viscosity(viscosity),
+      stopping_criterion(stopping_criterion),
+      use_continuation(use_continuation),
+      adaptive_refinement_after_continuation(adaptive_refinement_after_continuation),
+      gamma(gamma),
       viscosity_begin_continuation(viscosity_begin_continuation),
       continuation_step_size(continuation_step_size),
       triangulation(mpi_communicator,
                     typename Triangulation<dim>::MeshSmoothing(Triangulation<dim>::smoothing_on_refinement |
-                    Triangulation<dim>::smoothing_on_coarsening)), // to avoid ending up with 
+                    Triangulation<dim>::smoothing_on_coarsening)),
       fe(FE_Q<dim>(fe_degree + 1), dim, FE_Q<dim>(fe_degree), 1),
       dof_handler(triangulation),
       quad_formula(fe_degree + 2),
@@ -809,9 +840,10 @@ We begin by creating an initial rectangular grid, with a fixed number of cells, 
 ```cpp
     if constexpr (dim == 2) // Checking with constexpr because it is known already at compile-time
     {
-      std::vector<unsigned int> subdivisions{45, 10}; 
+      std::vector<unsigned int> subdivisions{45, 10};
       GridGenerator::subdivided_hyper_rectangle(rectangle, subdivisions, Point<2>(0, 0), Point<2>(50, 7.5));
     }
+
     else
     {
       std::vector<unsigned int> subdivisions{50, 8, 8};
@@ -819,12 +851,16 @@ We begin by creating an initial rectangular grid, with a fixed number of cells, 
     }
     
 
-    if (n_glob_ref > 0) { rectangle.refine_global(n_glob_ref); }
+    if (n_glob_ref > 0)
+      rectangle.refine_global(n_glob_ref);
+
 ```
 Afterwards, we remove the cells which cover areas (or volumes) not belonging to the geometry we are interested in:
 ```cpp
     std::set<typename Triangulation<dim>::active_cell_iterator> cells_to_remove;
     bool inside_domain{true};
+
+
     for (const auto &cell : rectangle.active_cell_iterators())
     {
       inside_domain = true;
@@ -834,23 +870,21 @@ Afterwards, we remove the cells which cover areas (or volumes) not belonging to 
         bool before_10_x_coord{cell->vertex(v)[0]<10};
         double v1{cell->vertex(v)[1]};
         bool first_check{(v1 > 5.0 && v1 < 7.5) || (v1 < 2.5)};
-
         if constexpr (dim == 2) 
         { 
           if (before_10_x_coord && first_check)
-          {
             inside_domain = false; // if dim==2, it is a sufficient condition to be in the inlet
-          }
         }
         else // otherwise we need to check also the z component
         {
           double v2{cell->vertex(v)[2]};
           bool second_check{(v2 > 5.0 && v2 < 7.5) || (v2 < 2.5)};
-
+          
           if (before_10_x_coord && (first_check || second_check))
             inside_domain = false;
         }
       }
+
 
       if (!inside_domain)
         cells_to_remove.insert(cell);
@@ -872,16 +906,16 @@ We create a triangulation with the removed cells, and we assign a label to each 
           if (std::fabs(face_center - 50.0) < 1e-12)
             face->set_boundary_id(2); // Outer boundary
           else
-          {
             face->set_boundary_id(3); // Wall boundary
-          }
         }
       }
     }
 ```
-If needed, we distort the mesh, and then we save it to output.
+If we want to, we can distort the mesh, and then save it to output.
 ```cpp
-    if (distort_mesh) { GridTools::distort_random(0.05, triangulation, true); }
+    if (distort_mesh)
+    GridTools::distort_random(0.1, triangulation, true);
+
 
     std::ofstream out("mesh.vtk");
     GridOut grid_out;
@@ -891,6 +925,8 @@ If needed, we distort the mesh, and then we save it to output.
 ## `setup_dofs` and `setup_system`
 These two functions have the goal of setting up the dofs and the system (i.e. by creating a sparsity pattern object).
 While they are mostly based on step 57, some modifications based on the [unsteady Navier-Stokes script](https://www.dealii.org/current/doxygen/deal.II/code_gallery_time_dependent_navier_stokes.html) in the `deal.II` code gallery are introduced in order to ensure that the code can run in parallel.
+
+As in step 57, we reorder DOFs in such a way that the ones related to velocity precede the ones related to pressure.
 ```cpp
   template <int dim>
   void NS<dim>::setup_dofs()
@@ -925,10 +961,13 @@ While they are mostly based on step 57, some modifications based on the [unstead
     relevant_partitioning[1] = locally_relevant_dofs.get_view(dof_u, dof_u + dof_p);
 
     
-    pcout << "   Number of active fluid cells: " << triangulation.n_global_active_cells() << std::endl << "   Number of degrees of freedom: " << dof_handler.n_dofs() << " (" << dof_u << '+' << dof_p << ')' << std::endl;
+    pcout << "---" << "Number of active fluid cells: " << triangulation.n_global_active_cells() << std::endl;
+    pcout << "---" << "Number of degrees of freedom: " << dof_handler.n_dofs() << " (" << dof_u << '+' << dof_p << ")" << std::endl;
 
 
     const FEValuesExtractors::Vector velocities(0);
+
+
     {
       nonzero_constraints.clear();
       zero_constraints.clear();
@@ -939,6 +978,7 @@ While they are mostly based on step 57, some modifications based on the [unstead
 We apply the boundary conditions on all the Dirichlet boundaries (i.e. except for the outlet):
 ```cpp
       std::vector<unsigned int> dirichlet_bc_ids{1, 3};
+
 
       for (auto id : dirichlet_bc_ids)
       {
@@ -962,17 +1002,15 @@ We apply the boundary conditions on all the Dirichlet boundaries (i.e. except fo
 
       DoFTools::make_hanging_node_constraints(dof_handler, nonzero_constraints);
       DoFTools::make_hanging_node_constraints(dof_handler, zero_constraints);
-
+      
 
       nonzero_constraints.close();
       zero_constraints.close();
     }
   }
-
-  
-  
-  // setup_system
-  
+```
+The `setup_system` method just initializes the vectors and matrices relevant to the problem:
+```cpp
   template <int dim>
   void NS<dim>::setup_system()
   {
@@ -1010,6 +1048,8 @@ It takes the following arguments:
 -`first_iteration`, which specifies whether the current iteration of Newton's method is the first one. In that case, inhomogeneous DBCs are imposed. Else, homogeneous ones are used;
 -`assemble_jacobian`, which is a boolean. Due to the fact that it is not always necessary to assemble the matrix, we might want to assemble the right-handside only. This is the case, e.g., when we need to compute the nonlinear residual, which is done by taking the norm of the right-handside only;
 -`steady_system`, specifying whether we need to assemble the matrix and right-handside corresponding to the steady system. If false, the ones corresponding to the unsteady system are built.
+
+We remark that it is not possible to assemble the matrices M, A and B just when the mesh is created.
 ```cpp
   template <int dim>
   void NS<dim>::assemble(const bool first_iteration, const bool assemble_jacobian, const bool steady_system)
@@ -1446,7 +1486,7 @@ Now we compress the matrices and the RHS. In the case of the steady system, we a
     const FEValuesExtractors::Vector velocity(0);
 
     KellyErrorEstimator<dim>::estimate(dof_handler, face_quad_formula, {}, present_solution, estimated_error_per_cell, fe.component_mask(velocity));
-    parallel::distributed::GridRefinement::refine_and_coarsen_fixed_fraction(triangulation, estimated_error_per_cell, 0.6, 0.4);
+    parallel::distributed::GridRefinement::refine_and_coarsen_fixed_fraction(triangulation, estimated_error_per_cell, 0.55, 0.45);
     
 
     if (triangulation.n_levels() > max_grid_level)
@@ -1503,10 +1543,11 @@ Now we compress the matrices and the RHS. In the case of the steady system, we a
       steady_solution.update_ghost_values();
     } 
   }
-
-
-
-// -------------------- COMPUTE INITIAL GUESS --------------------
+```
+## `compute_initial_guess`
+This function uses a continuation algorithm to solve the steady Navier-Stokes equations in order to find a suitable initial condition to be passed to the solver also in the time-dependent case.
+The logic behind it is the one described in the theoretical introduction, so no further comments are provided.
+```cpp
 
   template <int dim>
   void NS<dim>::compute_initial_guess()
@@ -1515,22 +1556,36 @@ Now we compress the matrices and the RHS. In the case of the steady system, we a
     const double target_viscosity{viscosity};
     const bool steady_system{true};
     const unsigned int n_max_iter{50};
-    const double tol{1e-7};
+    const double tol{1e-8};
+
  
     for (double mu = viscosity_begin_continuation; mu >= target_viscosity; mu -= continuation_step_size)
     {
-      viscosity = mu;
-      pcout << "Searching for initial guess with mu = " << mu << std::endl;
+      pcout << "\n" << std::string(20, '-') << " Searching for initial guess with mu = " << mu << " "
+            << std::string(20, '-') << "\n" << std::endl;
 
+
+      viscosity = mu;
       newton_iteration(steady_solution, tol, n_max_iter, is_initial_step, steady_system);
       
-      is_initial_step = false;
+
+      is_initial_step = false; // set to false after the first iteration
+
 
       if (mu==target_viscosity) 
         break;
     }
 
-    viscosity = target_viscosity;
+
+    viscosity = target_viscosity; // reset the correct value
+
+```
+We might want to refine the mesh after we have computed the steady solution: hopefully, this would allow to keep information about the asymmetry and lead the unsteady solution towards the asymmetrical configuration.
+
+To this aim, it is sufficient to pass the flag `adaptive_refinement_after_continuation` with value `true`, so that thhe mesh is refined at the end of the procedure.
+```cpp
+    if (adaptive_refinement_after_continuation)
+      refine_mesh(0, 2, adaptive_refinement_after_continuation); // if it is true, we can pass it as is_before_time_stepping=true
   }
 
 
@@ -1634,35 +1689,39 @@ int main(int argc, char *argv[])
 {
   try
   {
+
     using namespace dealii;
     using namespace coanda;
 
+
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
+
     
     const double theta{0.5}; // using the trapezoidal rule to integrate in time
-
     const bool adaptive_refinement{true};
+    const bool adaptive_refinement_after_continuation{true};
 
-    const bool use_continuation{true};
+
+    const bool use_continuation{false};
     const bool distort_mesh{false};
 
+
     const unsigned int fe_degree{1};
-
-    const double stopping_criterion{1e-30};
-
+    const double stopping_criterion{1e-7};
     const unsigned int n_glob_ref{1};
 
-    const unsigned int jacobian_update_step{4};
 
+    const unsigned int jacobian_update_step{3};
     const double gamma{1.0};
 
-    const double time_end{70};
+
+    const double time_end{25};
     const double delta_t{1e-2};
-    const double output_interval{1e-1};
-    const double refinement_interval{1e-1};
+    const double output_interval{0.5};
+    const double refinement_interval{1};
+
 
     const double viscosity{0.5};
-    
     const double viscosity_begin_continuation{2.0};
     const double continuation_step_size{1e-2};
     
@@ -1670,6 +1729,7 @@ int main(int argc, char *argv[])
     NS<2> bifurc_NS{
                     theta,
                     adaptive_refinement,
+                    adaptive_refinement_after_continuation,
                     use_continuation,
                     distort_mesh,
                     fe_degree,
@@ -1688,21 +1748,27 @@ int main(int argc, char *argv[])
 
 
     bifurc_NS.run();
+
   }
+
 
   catch (std::exception &exc)
   {
-    std::cerr << std::endl << std::endl << "----------------------------------------------------" << std::endl;
-    std::cerr << "Exception on processing: " << std::endl << exc.what() << std::endl << "Aborting!" << std::endl << "----------------------------------------------------" << std::endl;
+    std::cerr << std::endl << std::endl << std::string(50, '-') << std::endl;
+    std::cerr << "Exception on processing: " << std::endl << exc.what()
+              << std::endl << "Aborting!" << std::endl << std::string(50, '-') << std::endl;
     return 1;
   }
+  
 
   catch (...)
   {
-    std::cerr << std::endl << std::endl << "----------------------------------------------------" << std::endl;
-    std::cerr << "Unknown exception!" << std::endl << "Aborting!" << std::endl << "----------------------------------------------------" << std::endl;
+    std::cerr << std::endl << std::endl << std::string(50, '-') << std::endl;
+    std::cerr << "Unknown exception!" << std::endl << "Aborting!" << std::endl << std::string(50, '-') << std::endl;
     return 1;
   }
-  return 0;
+
+
+  return 0; 
 }
 ```

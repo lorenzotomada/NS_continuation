@@ -1,3 +1,77 @@
+# Formal problem statement
+
+The goal of this script is to study a symmetry-breaking bifurcation phenomena caused by the so-called Coandă effect in a sudden-expansion channel.
+
+An introduction to the problem, as well as the strategies used to solve it, are presented in the following.
+
+## The problem we want to solve
+Let us consider the strong form of the incompressible unsteady Navier-Stokes equations:
+```math
+\begin{numcases}{}
+    \frac{\partial\boldsymbol{u}}{\partial t} + (\boldsymbol{u}\cdot\nabla)\boldsymbol{u} - \mu\Delta\boldsymbol{u} + \nabla p = \boldsymbol{f}, \quad\forall(\boldsymbol{x}, t)\in\Omega\times\mathbb{R}^+, \\
+    \nabla\cdot \boldsymbol{u}= 0, \quad\forall(\boldsymbol{x}, t)\in\Omega\times\mathbb{R}^+
+\end{numcases}
+```
+where $\mu\in\mathbb{R}^+$ represents the kinematic viscosity of the fluid, $\boldsymbol{f}\in L^2(\mathbb{R}^+; [L^2(\Omega)]^d)$ is a given force per unit volume and $\Omega\subseteq\mathbb{R}^d$ in which $d = 2, 3$.
+
+
+These equations describe the behaviour of an incompressible fluid of constant density $\rho\in\mathbb{R}^+$ and they need to be enhanced with initial conditions
+```math
+    \boldsymbol{u}(\boldsymbol{x}, 0) = \boldsymbol{u}_0(\boldsymbol{x}),\quad\forall\boldsymbol{x}\in\Omega,
+```
+where $\boldsymbol{u}_0$ is a given divergence-free vector field, and boundary conditions, either of Dirichlet type
+```math
+    \boldsymbol{u}(\boldsymbol{x}, t) = \boldsymbol{\varphi}(\boldsymbol{x}, t), \quad\forall(\boldsymbol{x}, t)\in\Gamma_D\times\mathbb{R}^+,
+```
+with $\boldsymbol{\varphi}\in [H^{1/2}(\Gamma_D)]^d$ given, or of Neumann type
+```math
+    \left(\mu\frac{\partial\boldsymbol{u}}{\partial\boldsymbol{n}}-p\boldsymbol{n}\right)(\boldsymbol{x}, t) = \left((\mu\nabla\boldsymbol{u})\cdot\boldsymbol{n}-p\boldsymbol{n}\right)(\boldsymbol{x}, t) = \boldsymbol{\psi}(\boldsymbol{x}, t),\quad\forall(\boldsymbol{x}, t)\in\Gamma_N\times\mathbb{R}^+,
+```
+in which $\boldsymbol{\psi}\in [L^2(\Gamma_D)]^d$ is also given.
+
+Here $\Gamma_D\subset\partial\Omega$ and $\Gamma_N\subset\partial\Omega$ are portions of the boundary of $\Omega$ on which, respectively, Dirichlet or Neumann boundary conditions are imposed, with $\Gamma_D\cup\Gamma_N=\partial\Omega$, $\mathring{\Gamma}_D\cap\mathring{\Gamma}_N=\emptyset$ and $|\Gamma_D|, |\Gamma_N|>0$.
+
+### Weak form of the Navier-Stokes equations
+The weak form of the Navier-Stokes system, endowed with initial and boundary conditions, can then be written as follows: find
+$\boldsymbol{u}\in L^2(\mathbb{R}^+; [H^1(\Omega)]^d)\cap C^0(\mathbb{R}^+; [L^2(\Omega)]^d)$ and $p\in L^2(\mathbb{R}^+; Q)$ such that
+```math
+\begin{numcases}{}
+\begin{aligned}
+    &\int_\Omega \frac{\partial \boldsymbol{u}}{\partial t}\cdot\boldsymbol{v}\, d\Omega + \int_\Omega \mu\nabla\boldsymbol{u}\cdot\nabla\boldsymbol{v} \, d\Omega + \int_\Omega [(\boldsymbol{u}\cdot\nabla)]\boldsymbol{u}\cdot\boldsymbol{v} \, d\Omega +\\
+    &\quad - \int_\Omega p\nabla\cdot\boldsymbol{v} \, d\Omega = \int_\Omega \boldsymbol{f}\cdot\boldsymbol{v} \, d\Omega + \int_{\Gamma_N} \boldsymbol{\psi}\cdot\boldsymbol{v} \, d\gamma,  \quad \forall \boldsymbol{v} \in V,
+\end{aligned} \\
+\int_\Omega q\nabla\cdot\boldsymbol{u} \, d\Omega = 0, \quad \forall q \in Q,
+\end{numcases}
+```
+in which the space $V = [H^1_{\Gamma_D}(\Omega)]^d = \{\boldsymbol{v}\in  [H^1(\Omega)]^d:\boldsymbol{v}\restriction_{\Gamma_D} = 0 \}$, and $Q=L^2(\Omega)$ if $\Gamma_N\neq\emptyset$, else $Q=L^2_0(\Omega)$.
+
+### The Navier-Stokes equations in a channel
+A common problem in fluid dynamics is the study of the behavior of a fluid flow in a channel $\Omega$.
+Assume that the boundary of $\Omega$, which we call $\partial\Omega=\Gamma$, is partitioned into three different regions $\Gamma_{\text{inlet}}$, $\Gamma_\text{out}$ and $\Gamma_0$, each of them having non-negative measure and such that their interiors are pairwise disjoint. $\Gamma_\text{inlet}$ represents the subset of $\Gamma$ from which a fluid can flow inside the channel; $\Gamma_\text{out}$ represents the boundary from which the fluid can leave the channel, while $\Gamma_0$ represents the walls of $\Omega$, which are assumed to be rigid.
+
+Formally, this corresponds to endowing the Navier-Stokes equations with stress free (Neumann) boundary conditions on $\Gamma_\text{out}$, no-slip (homogeneous) Dirichlet boundary conditions  on $\Gamma_{\text{wall}}$ and non-homogeneous Dirichlet boundary conditions on $\Gamma_{\text{inlet}}$, so that $\Gamma_\text{inlet}\cup \Gamma_\text{out}=\Gamma_D$, $\Gamma_\text{out}=\Gamma_N$, i.e. we impose that 
+
+```math
+\begin{cases}
+\begin{array}{ll}
+    \nabla\cdot \boldsymbol{u} = 0, & \quad \text{in } \Omega\times [0, T],\\
+    \boldsymbol{u} = \boldsymbol{u}_{\text{inlet}}, & \quad \text{in } \Gamma_{\text{inlet}}\times [0, T],\\
+    \boldsymbol{u} = 0, & \quad \text{in } \Gamma_0\times [0, T], \\
+    -p\boldsymbol{n} + (\mu\nabla\boldsymbol{u})\cdot\boldsymbol{n} = 0, & \quad \text{in } \Gamma_{\text{out}}\times [0, T].
+\end{array}
+\end{cases}
+```
+
+### Bifurcation problems: a symmetry-breaking bifurcation
+In CFD, difficulties might arise when the Reynolds number is high; in particular, there might be issue related to the uniqueness of the solution and transition of fluid flow stability.
+
+These phenomena (as well as many other so-called _qualitative changes_) can be viewed within the framework of bifurcation theory.
+
+While a formal introduction to bifurcation theory (e.g. properly defining bifurcation points, studying their relationship with the implicit function theorem and so in) is not possible here for time reason, there are two main aspects related to bifurcations which are of practical importance:
+- there exists a critical point $\mu^\ast$ after which the uniqueness of the solution is no longer guaranteed
+- various branches of solutions might have different _stability_ properties, making them _physical_ or _unphysical_.
+
+
 
 # Utilities
 We begin by including all the necessary files:
@@ -262,7 +336,7 @@ Recall that the matrix resulting from a discretization of the Navier-Stokes equa
 ```math
 \mathcal{J} = \begin{bmatrix} 
 F & B^T \\ 
--B & 0 
+-B & S 
 \end{bmatrix},
 ```
 in which $F = \frac{1}{\Delta t} M + A + C(\mathbf{U}^n)$, and $C(\mathbf{U}^n)$ is given by the (linearized) convection terms of
@@ -381,11 +455,13 @@ Here we also save a `PETScWrappers::SparseDirectMUMPS` object: while the choice 
 #### The `SIMPLE` constructor
 The constructor just initializes a temporary vector which is going to be needed in the following.
 ```cpp
-  SIMPLE::SIMPLE(MPI_Comm mpi_communicator,
+  SIMPLE::SIMPLE(
+                MPI_Comm mpi_communicator,
                 TimerOutput &timer,
                 const std::vector<IndexSet> &owned_partitioning,
                 const std::vector<IndexSet> &relevant_partitioning,
-                const PETScWrappers::MPI::BlockSparseMatrix &jacobian_matrix) : 
+                const PETScWrappers::MPI::BlockSparseMatrix &jacobian_matrix
+                ) : 
     mpi_communicator(mpi_communicator),
     timer(timer),
     owned_partitioning(owned_partitioning),
@@ -521,21 +597,26 @@ Since no other novelties with respect to step 57 are introduced, no further comm
   {
     public:
     BlockSchurPreconditioner(
-    TimerOutput &timer,
-    const double gamma,
-    const double viscosity,
-    const PETScWrappers::MPI::BlockSparseMatrix &jacobian_matrix,
-    PETScWrappers::MPI::SparseMatrix &pressure_mass_matrix);
+                            TimerOutput &timer,
+                            const double gamma,
+                            const double viscosity,
+                            const PETScWrappers::MPI::BlockSparseMatrix &jacobian_matrix,
+                            PETScWrappers::MPI::SparseMatrix &pressure_mass_matrix
+                            );
   
+
     void vmult(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const;
   
+
     private:
     TimerOutput &timer;
     const double gamma;
     const double viscosity;
   
+
     const SmartPointer<const PETScWrappers::MPI::BlockSparseMatrix> jacobian_matrix;
     const SmartPointer<PETScWrappers::MPI::SparseMatrix> pressure_mass_matrix;
+
 
     SolverControl tmp_solver_control;
     mutable PETScWrappers::SparseDirectMUMPS A_solver;

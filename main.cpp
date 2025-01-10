@@ -1,16 +1,10 @@
 /* -----------------------------------------------------------------------------
  TODO:
     1) Perform tests
-      1.1) Find the steady, stable solution
-      1.2) Without mesh refinement, symmetrical mesh (likely done in the unsteady case)
-      1.3) Without mesh refinement, asymmetrical mesh
-      1.4) With mesh refinement, symmetrical mesh
-      1.5) With mesh refinement, symmetrical mesh, asymmetrical refinement (set refinement flag only e.g. if y > 7.5/2)
-      1.6) Combine with initial guesses and see what changes (either, if possible, trying to obtain the other branch, or to get immediately the unstable one)
-      1.7) At least hints for the 3D case
-      1.8) Refine the mesh according to the steady system and use it as fixed mesh for time stepping
-    2) Write the presentation
-    3) Maybe: assemble matrices not depending on the mesh just once after each mesh refinement
+      1.1) Without mesh refinement, symmetrical mesh
+      1.2) With mesh refinement, symmetrical mesh
+      1.3) Refine the mesh according to the steady system and use it as fixed mesh for time stepping
+    2) Maybe: assemble matrices not depending on the mesh just once after each mesh refinement
 * ------------------------------------------------------------------------------ */
 
 
@@ -308,11 +302,13 @@ namespace coanda
 
 // --------------------- SIMPLE::CONSTRUCTOR ---------------------
 
-  SIMPLE::SIMPLE(MPI_Comm mpi_communicator,
+  SIMPLE::SIMPLE(
+                MPI_Comm mpi_communicator,
                 TimerOutput &timer,
                 const std::vector<IndexSet> &owned_partitioning,
                 const std::vector<IndexSet> &relevant_partitioning,
-                const PETScWrappers::MPI::BlockSparseMatrix &jacobian_matrix) : 
+                const PETScWrappers::MPI::BlockSparseMatrix &jacobian_matrix
+                ) : 
     mpi_communicator(mpi_communicator),
     timer(timer),
     owned_partitioning(owned_partitioning),
@@ -436,11 +432,12 @@ namespace coanda
   {
     public:
     BlockSchurPreconditioner(
-    TimerOutput &timer,
-    const double gamma,
-    const double viscosity,
-    const PETScWrappers::MPI::BlockSparseMatrix &jacobian_matrix,
-    PETScWrappers::MPI::SparseMatrix &pressure_mass_matrix);
+                            TimerOutput &timer,
+                            const double gamma,
+                            const double viscosity,
+                            const PETScWrappers::MPI::BlockSparseMatrix &jacobian_matrix,
+                            PETScWrappers::MPI::SparseMatrix &pressure_mass_matrix
+                            );
   
     void vmult(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const;
   
@@ -578,6 +575,7 @@ namespace coanda
     void refine_mesh(
                     const unsigned int min_grid_level,
                     const unsigned int max_grid_level,
+                    const double fraction_to_refine,
                     const bool is_before_time_stepping=false
                     );
     
@@ -1012,13 +1010,14 @@ namespace coanda
                       + phi_u[i] * (grad_phi_u[j] * present_velocity_values[q]); //  Linearization of the convective term (pt. 2) 
                 
 
-                const double quantity2 =
-                      - div_phi_u[i] * phi_p[j]                                  //  b(v, p) = -p*div(v)   
-                      - phi_p[i] * div_phi_u[j];                                 //  b(u, q) = -q*div(u)  
-
+                double quantity2 =
+                      - div_phi_u[i] * phi_p[j];                                 //  b(v, p) = -p*div(v) 
+                  
 
                 if (!steady_system)
                 {
+                  quantity2 += + phi_p[i] * div_phi_u[j];  
+                  
                   const double mass_matrix_contribution =
                         (phi_u[i] * phi_u[j]) / time.get_delta_t();               //  From time stepping, 1/dt*M
 
@@ -1032,12 +1031,16 @@ namespace coanda
 
 
                 else
+                {
+                  quantity2 += - phi_p[i] * div_phi_u[j];                    //  b(u, q) = -q*div(u)  
+               
                   local_matrix(i, j) += (
                         quantity1
                         + quantity2
                         + gamma * div_phi_u[i] * div_phi_u[j]
                         + phi_p[i] * phi_p[j]
                         ) * fe_values.JxW(q);
+                }
               }
             }
 
@@ -1051,14 +1054,14 @@ namespace coanda
                   - phi_u[i] * (present_velocity_gradients[q] * present_velocity_values[q]); //  from C
 
 
-            const double quantity2 = // from B^T and B
-                  + div_phi_u[i] * present_pressure_values[q]
-                  + phi_p[i] * present_velocity_divergence;
+            double quantity2 = // from B^T
+                  + div_phi_u[i] * present_pressure_values[q];
  
  
             if (!steady_system)
             {
               const double mass_matrix_contribution = (phi_u[i]*tmp[q]) / time.get_delta_t();
+              quantity2 -= phi_p[i] * present_velocity_divergence;
             
 
               local_rhs(i) += (
@@ -1078,6 +1081,7 @@ namespace coanda
 
             else
             {
+              quantity2 += phi_p[i] * present_velocity_divergence;
               local_rhs(i) += (
                         quantity1
                         + quantity2
@@ -1259,7 +1263,7 @@ namespace coanda
           evaluation_points = dst;
 
         // We do not update the Jacobian at each iteration to reduce the cost
-        if (line_search_n % jacobian_update_step == 0 || (line_search_n < 2 && (time.get_timestep()<15 && !steady_system)))
+        if (line_search_n % jacobian_update_step == 0 || (line_search_n < 2 && time.get_timestep()<15))
           assemble_system(first_iteration, steady_system);
         else
           assemble_rhs(first_iteration, steady_system);
@@ -1377,15 +1381,20 @@ namespace coanda
   void NS<dim>::refine_mesh(
                             const unsigned int min_grid_level,
                             const unsigned int max_grid_level,
+                            const double fraction_to_refine,
                             const bool is_before_time_stepping
                             )
   {
     TimerOutput::Scope timer_section(timer, "Refine mesh");
     pcout << "Refining mesh..." << std::endl;
 
+  
+    const double fraction_to_coarsen{1-fraction_to_refine};
+
 
     Vector<float> estimated_error_per_cell(triangulation.n_active_cells());
     const FEValuesExtractors::Vector velocity(0);
+
 
     if (!is_before_time_stepping)
       KellyErrorEstimator<dim>::estimate(
@@ -1407,7 +1416,12 @@ namespace coanda
                                         );
     
 
-    parallel::distributed::GridRefinement::refine_and_coarsen_fixed_fraction(triangulation, estimated_error_per_cell, 0.6, 0.4);
+    parallel::distributed::GridRefinement::refine_and_coarsen_fixed_fraction(
+                                                                            triangulation,
+                                                                            estimated_error_per_cell,
+                                                                            fraction_to_refine,
+                                                                            fraction_to_coarsen
+                                                                            );
     
 
     if (triangulation.n_levels() > max_grid_level)
@@ -1494,7 +1508,12 @@ namespace coanda
     viscosity = target_viscosity;
 
     if (adaptive_refinement_after_continuation)
-      refine_mesh(0, 2, adaptive_refinement_after_continuation); // if it is true, we can pass it as is_before_time_stepping=true
+    {
+      const double fraction_to_refine{0.65};
+      refine_mesh(0, 2, fraction_to_refine, adaptive_refinement_after_continuation);
+      newton_iteration(steady_solution, tol, n_max_iter, is_initial_step, steady_system);
+      refine_mesh(0, 2, fraction_to_refine, adaptive_refinement_after_continuation); // refine once again
+    }
   }
 
 
@@ -1522,6 +1541,8 @@ namespace coanda
 
     bool should_stop{false};
     bool first_iteration{true};
+
+    const double fraction_to_refine{0.6};
 
     if (use_continuation)
     {
@@ -1579,7 +1600,7 @@ namespace coanda
 
       // Refinement
       if (time.time_to_refine() && adaptive_refinement)
-        refine_mesh(0, 2);
+        refine_mesh(0, 2, fraction_to_refine);
     }
 
     const std::string filename1{"residual_first_iteration.csv"};
@@ -1614,24 +1635,24 @@ int main(int argc, char *argv[])
 
     const unsigned int n_glob_ref{1};
     const unsigned int fe_degree{1};
-    const unsigned int jacobian_update_step{3};
+    const unsigned int jacobian_update_step{4};
 
 
-    const double viscosity{0.5};
     const double theta{0.5};
-    const double stopping_criterion{1e-7};
+    const double viscosity{0.5};
+    const double stopping_criterion{1e-6};
     
 
     const double time_end{25};
     const double delta_t{1e-2};
     const double output_interval{1e-1};
-    const double refinement_interval{1e-1};
+    const double refinement_interval{1e-0};
 
 
-    const bool use_continuation{true};
-    const bool adaptive_refinement_after_continuation{true};
+    const bool use_continuation{false};
+    const bool adaptive_refinement_after_continuation{false};
     const double gamma{5};
-    const double viscosity_begin_continuation{1.5};
+    const double viscosity_begin_continuation{1.2};
     const double continuation_step_size{1e-2};
     
 

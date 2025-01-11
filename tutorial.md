@@ -67,7 +67,21 @@ In CFD, difficulties might arise when the Reynolds number is high; in particular
 
 These phenomena (as well as many other so-called _qualitative changes_) can be viewed within the framework of bifurcation theory.
 
-While a formal introduction to bifurcation theory (e.g. properly defining bifurcation points, studying their relationship with the implicit function theorem and so in) is not possible here for time reason, there are two main aspects related to bifurcations which are of practical importance:
+Consider the general (strong) form of a parameterized PDE: for a given value of $\boldsymbol{\mu}\in\mathbb{P}\subset\mathbb{R}^p$, find $X\in\mathbb{X}$ such that
+```math
+F(X; \boldsymbol{\mu}_{n})=0, \label{abstractPDE}
+```
+with $F: \mathbb{X}\rightarrow\mathbb{X}'$.
+
+We say that $\boldsymbol{\mu^{\ast}}\in\mathbb{P}$ is a _bifurcation point_ for the PDE \eqref{abstractPDE} if there exists a sequence $(X_n, \boldsymbol{\mu}_n)$, $X_n$ being not trivial, such that:
+```math
+    \begin{cases}
+        F(X_n; \boldsymbol{\mu}_n)=0,  \quad\forall n\in\mathbb{N} \\
+         (X_n, \boldsymbol{\mu}_n)\rightarrow (\bar{X},\, \boldsymbol{\mu^{\ast}}).
+    \end{cases}
+```
+
+While a formal introduction to bifurcation theory (e.g. studying the relationship between bifurcation points and the implicit function theorem and so in) is not possible here for time reason, there are two main aspects related to bifurcations which are of practical importance:
 - there exists a critical point $\mu^\ast$ after which the uniqueness of the solution is no longer guaranteed
 - various branches of solutions might have different _stability_ properties, making them _physical_ or _unphysical_.
 
@@ -591,6 +605,11 @@ However, and similarly to the case of SIMPLE, since a direct solver is used for 
 Also in this situation, the choice to use a direct solver (in line with what was done in step 57) stems from the difficulty to find good preconditioners for the system, as well as from the fact that for relatively small systems the performance gain using an iterative solver and MPI is often negligible, if present.
 
 Since no other novelties with respect to step 57 are introduced, no further comments are provided on this topic, and we refer the interested reader to the aforementioned tutorial and the references therein.
+
+We remark, as explained in [the paper by Benzi et al.](https://epubs.siam.org/doi/epdf/10.1137/050646421), that the bigger the value of $\gamma$, the closer to the original system the new one is. However, issue might arise for high values of $\gamma$, as this choice makes the system ill-conditioned.
+In general, the auto
+
+This stabilization technique has been proven to work well with direct solvers (as it is the case here), even though no clear answer has been provided regarding a preconditioner an iterative solver to be used in relation to the ratio $\frac{\mu}{\gamma}$.
 
 ```cpp
   class BlockSchurPreconditioner : public Subscriptor
@@ -1527,7 +1546,8 @@ Afterwards, it will be reinitialized and used as an actual initial guess.
 
           double dist_from_guess{tmp_initial_guess.l2_norm()};
           double alpha = dist_from_guess/guess_u_norm; // so that it is always in [0, 1]
-          pcout << "  The relative distance between the solution at the previous time step and the one to the steady problem is " << alpha << std::endl;
+          pcout << "  The relative distance between the solution at the previous time step and the one to the steady problem is "
+                << alpha << std::endl;
 
 
           evaluation_points.reinit(owned_partitioning, mpi_communicator);
@@ -1697,7 +1717,7 @@ The only difference of this implementation with respect to the one in the `deal.
 As the name suggests, this method is called in order to perform mesh refinement.
 It takes as input two different (unsigned) integers, and a boolean.
 
-The two numbers correspond to the minimum grid level and the maximum one, which determine how the refinement is performed (avoiding that the level of refinement/coarsening of the cells are not included in the $\{\text{min_grid_level}, \dots, \text{max_grid_level}\}$).
+The two numbers correspond to the minimum grid level and the maximum one, which determine how the refinement is performed (avoiding that the level of refinement and coarsening of the cells are not included in the $\{\text{min_grid_level}, \dots, \text{max_grid_level}\}$ ).
 
 The flag `is_before_time_stepping`, instead, is passed if and only if we have chosen to use the continuation algorithm, and decided to refine the mesh before time-stepping.
 The estimator which is used is Kell's one, and it is applied either to `present_solution` or (if `is_before_time_stepping` is `true`), to `steady_solution`.
@@ -2027,12 +2047,188 @@ int main(int argc, char *argv[])
 ```
 
 # Numerical results
-## Case 1
-## Case 2
-## Case 3
+This section is devoted to a presentation of the results obtained using the code introduced here.
+
+All the following experiments have been perfomed considering the same initial mesh (with `n_glob_ref` = 1), stepsize in time equal to $dt=1e-2$, `jacobian_update_step`=3, `fe_degree`=1, `viscosity_begin_continuation`=1.2, $\mu=0.5$ and $\theta = \frac{1}{2}$.
+
+The experiments have been performed taking into account the 2D geometry, since the lower number of DoFs allowed to perform more experiments and get a better understanding of the phenomenon.
+
+When a continuation algorithm was used, the stabilization parameter $\gamma$ was chosen to be equal to 5.0 by trial and error, as this corresponded to a great improvement in term of the performed number of outer GMRES steps.
+
+
+## Symmetrical mesh, continuation algorithm
+### Steady system
+When considering a symmetrical mesh (that is, setting `distort_mesh` to `false`), even the use of the continuation algorithm presented in this work did not allow to observe the unsteady, stable solution to the problem, hence making it of no use to employ a continuation algorithm during time-stepping.
+
+The following images displays the observed behaviour of the $u$ component of the velocity in this case.
+
+<figure>
+  <img src="images/symm_mesh/mesh.png" alt="Alt text" width="500">
+  <figcaption>The mesh for the considered problem.</figcaption>
+</figure>
+
+The following image displays the steady solution to the problem which is found using such a discretization:
+
+<figure>
+  <img src="images/symm_mesh/steady_sol.png" alt="Alt text" width="500">
+  <figcaption>The mesh for the considered problem.</figcaption>
+</figure>
+
+
+### Time-stepping
+As we could expect, using an unperturbed mesh did not allow to observe the wall-hugging behaviour in the unsteady case.
+
+The following images display the behaviour of the velocity field for different values of $t$.
+
+
+<div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; text-align: center;">
+  <div>
+    <img src="images/symm_mesh/t_0.1.png" alt="Image 1" width="400" height="auto">
+    <p>t=0.1</p>
+  </div>
+  <div>
+    <img src="images/symm_mesh/t_1.0.png" alt="Image 2" width="400" height="auto">
+    <p>t=1</p>
+  </div>
+  <div>
+    <img src="images/symm_mesh/t_5.0.png" alt="Image 3" width="400" height="auto">
+    <p>t=5</p>
+  </div>
+  <div>
+    <img src="images/symm_mesh/t_20.0.png" alt="Image 4" width="400" height="auto">
+    <p>t=20</p>
+  </div>
+</div>
+
+It is easy to observe that the final configuration is fully symmetrical.
+
+---
+Now we plot two quantities of interest, namely the relative distance bewteen two successive iterations $\displaystyle\frac{\|\boldsymbol{u}^{n+1}-\boldsymbol{u}^n\|_2}{\|\boldsymbol{u}^n\|_2}$ and the residual corresponding to the initial guess for Newton's method at each time step.
+
+
+<div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; text-align: center;">
+  <div>
+    <img src="images/symm_mesh/relative_distances.png" alt="Image 1" width="400" height="auto">
+    <p>Relative distance</p>
+  </div>
+  <div>
+    <img src="images/symm_mesh/residuals.png" alt="Image 2" width="400" height="auto">
+    <p>Residual</p>
+  </div>
+</div>
+
+It is work highlighting a few interesting things which can be observed performing this experiment:
+- the qualitative behaviour of these two quantities is similar: while the orders of magnitude are different, the trend they follow is the same;
+- the peaks correspond to time instances in which the mesh refinement is performed;
+- apart from the peaks, the two quantities decrease during the time evolution of the system, and then there is a baseline around which they stabilize after the intial diffusion phase is over.
+
+
+The take-home message is the following: mesh refinement on its own might not be sufficient to allow observing the bifurcating behaviour of the solution.
+
+
+
+
+## Distorted mesh, with a continuation algorithm and mesh refinement
+Using a slightly asymmetrical mesh (a detail of which can be seen below), it was possible to find numerically one of the two stable, symmetrical solutions.
+
+A detail of the distorted mesh is plotted below:
+
+<figure>
+  <img src="images/asymm_mesh_1/asymm_mesh.png" alt="Alt text" width="500">
+  <figcaption>A detail showing how the mesh was distorted.</figcaption>
+</figure>
+
+
+### The steady system
+In particular, directly solving the steady system for low values of mu, e.g. $\mu=0.6$ (coming after the bifurcation has occurred), did not allow to see the bifurcating behaviour of the system, meaning that the continuation algorithm was actually crucial in order to retrieve the behaviour associated to the non-uniqueness of the solution.
+
+<figure>
+  <img src="images/asymm_mesh_1/asymm_steady_sol.png" alt="Alt text" width="500">
+  <figcaption>The stable solution obtained using a continuation algorithm.</figcaption>
+</figure>
+
+
+After the continuation algorithm's execution terminated, the mesh was refined.
+
+Mesh refinement was also used every $0.1$ seconds during the time-evolution of the system.
+
+### Time-stepping
+The distorted mesh and the continuation algorithm allowed us to observe the how the evolution of the system evolved to a stable configuration.
+
+However, it is interesting to underline that the time-dependent system evolved until it reached a solution belonging to the other branch w.r.t. the one provided as initial guess to the nonlinear solver, hence suggesting that (unlike in the steady case) the mesh, and not the initial guess, is the main factor related to the fact that the solution moves away from the unstable, asymmetrical solution.
+
+
+<div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; text-align: center;">
+  <div>
+    <img src="images/asymm_mesh_1/t_0.1.png" alt="Image 1" width="400" height="auto">
+    <p>t=0.1</p>
+  </div>
+  <div>
+    <img src="images/asymm_mesh_1/t_1.0.png" alt="Image 2" width="400" height="auto">
+    <p>t=1</p>
+  </div>
+  <div>
+    <img src="images/asymm_mesh_1/t_5.0.png" alt="Image 3" width="400" height="auto">
+    <p>t=5</p>
+  </div>
+  <div>
+    <img src="images/asymm_mesh_1/t_25.0.png" alt="Image 4" width="400" height="auto">
+    <p>t=20</p>
+  </div>
+</div>
+
+Examining the system's time evolution, we can identify two distinct phases of dynamical behavior:
+- initially, the system undergoes a diffusion phase, after which the solution reaches the symmetrical, unstable configuration;
+- afterwards, the solution starts to bend towards one of the walls, and slowly beginning to display the aforementioned wall-hugging behaviour.
+
+After the asymmetrical, stable configuration is reached, the system finally reaches a steady state.
+
+---
+Also here, we plot the residual and the relative distance $\displaystyle\frac{\|\boldsymbol{u}^{n+1}-\boldsymbol{u}^n\|_2}{\|\boldsymbol{u}^n\|_2}$.
+
+
+<div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; text-align: center;">
+  <div>
+    <img src="images/asymm_mesh_1/relative_distances.png" alt="Image 1" width="400" height="auto">
+    <p>Relative distance</p>
+  </div>
+  <div>
+    <img src="images/asymm_mesh_1/residuals.png" alt="Image 2" width="400" height="auto">
+    <p>Residual</p>
+  </div>
+</div>
+
+Also in this case, the two quantities under investigation exhibit similar qualitative behavior.
+
+However, the behaviour of these quantities is qualitatively different from the case described before: after the initial phase in which the relative distance decreases, it does not stabilize around a fixed quantities.
+Instead, it reaches a local minimum corresponding to the instant of time in which the symmetrical configuration is reached.
+
+As the solution begins to bend towards a wall, the relative distance starts to increase, and then eventually decreases, until it reaches a global minimum when the steady state is reached.
+
+---
+The two take-home messages are the following:
+- mesh refinement on its own might not be sufficient to allow observing the bifurcating behaviour of the solution;
+- the threshold $\tau$ (that is, `stopping criterion`) is crucial to observe the bifurcating behaviour: even for relatively low values, such as $10^{-4}$, it is possible to overlook the bifurcation, mistakenly assuming that the steady state has been already reached!
+
+
+
+
+
+
+
+## Distorted mesh, with a continuation algorithm, but mesh refinement
+
+
+# Conclusions:
+This project allowed to investigate the interplay between mesh properties, mesh refinement and continuation algorithms in the unsteady case of a well-known benchmark in literature.
+
+
+Remarkably, the experiments are in complete accordance with what was observed in preliminary investigations using FEniCS.
+Remark that symmetrical meshes tend to perform poorly on this kind of problems, as seen by this study and pointed out by [Quaini et al.](https://www.tandfonline.com/doi/abs/10.1080/10618562.2016.1144877).
+
 
 # Possible extensions
 A few ideas include:
 - finding a suitable iterative method/preconditioner for the `SIMPLE` and `BlockSchurPreconditioner` inner linear systems with the `(0,0)` block of $F$
-- performing numerical experiment in the 3D case (related to the previous one)
+- performing numerical experiment in the 3D case (related to the previous one). Still to be studied in literature, using this geometry!
 - experimenting with different kinds of meshes (tetrahedral ones, more irregular ones)

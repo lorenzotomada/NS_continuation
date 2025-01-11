@@ -1,9 +1,8 @@
 /* -----------------------------------------------------------------------------
  TODO:
     1) Perform tests
-      1.1) Without mesh refinement, symmetrical mesh
-      1.2) With mesh refinement, symmetrical mesh
-      1.3) Refine the mesh according to the steady system and use it as fixed mesh for time stepping
+      1.1) A good one with mesh refinement and asymmetrical mesh
+      1.2) Refine the mesh according to the steady system and use it as fixed mesh for time stepping
     2) Maybe: assemble matrices not depending on the mesh just once after each mesh refinement
 * ------------------------------------------------------------------------------ */
 
@@ -1244,7 +1243,8 @@ namespace coanda
 
           double dist_from_guess{tmp_initial_guess.l2_norm()};
           double alpha = dist_from_guess/guess_u_norm; // so that it is always in [0, 1]
-          pcout << "  The relative distance between the solution at the previous time step and the one to the steady problem is " << alpha << std::endl;
+          pcout << "  The relative distance between the solution at the previous time step and the one to the steady problem is "
+                << alpha << std::endl;
 
           evaluation_points.reinit(owned_partitioning, mpi_communicator);
           evaluation_points = 0.0;
@@ -1629,8 +1629,8 @@ int main(int argc, char *argv[])
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
 
     
-    const bool distort_mesh{false};
-    const bool adaptive_refinement{true};
+    const bool distort_mesh{true};
+    const bool adaptive_refinement{false};
 
 
     const unsigned int n_glob_ref{1};
@@ -1640,17 +1640,17 @@ int main(int argc, char *argv[])
 
     const double theta{0.5};
     const double viscosity{0.5};
-    const double stopping_criterion{1e-6};
+    const double stopping_criterion{1e-7};
     
 
-    const double time_end{25};
+    const double time_end{40};
     const double delta_t{1e-2};
     const double output_interval{1e-1};
     const double refinement_interval{1e-0};
 
 
-    const bool use_continuation{false};
-    const bool adaptive_refinement_after_continuation{false};
+    const bool use_continuation{true};
+    const bool adaptive_refinement_after_continuation{true};
     const double gamma{5};
     const double viscosity_begin_continuation{1.2};
     const double continuation_step_size{1e-2};

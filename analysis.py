@@ -2,10 +2,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 
-directory = 'asymm_mesh_1'
+directory = 'asymm_mesh_2'
 
 if not os.path.exists('images/' + directory):
-    os.makedirs(directory)
+    os.makedirs('images/' + directory)
     print(f"Directory 'images/{directory}' created.")
 
 
@@ -15,7 +15,7 @@ filename2 = os.path.join('results', directory, 'relative_distances.csv')
 residuals = np.loadtxt(filename1, delimiter=',')
 relative_distances = np.loadtxt(filename2, delimiter=',')
 
-initial_index = 110
+initial_index = 2 # 110 or 2, depending on the fact that continuation is used
 residuals = residuals[initial_index:]
 relative_distances = relative_distances[initial_index:]
 

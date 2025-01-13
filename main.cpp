@@ -1,8 +1,7 @@
 /* -----------------------------------------------------------------------------
  TODO:
     1) Perform tests
-      1.1) A good one with mesh refinement and asymmetrical mesh
-      1.2) Refine the mesh according to the steady system and use it as fixed mesh for time stepping
+      1.1) A good one with mesh refinement in time and continuation
     2) Maybe: assemble matrices not depending on the mesh just once after each mesh refinement
 * ------------------------------------------------------------------------------ */
 
@@ -712,6 +711,8 @@ namespace coanda
 
 
 // -------------------- CREATE THE GRID --------------------
+
+// https://github.com/ICGonnella/SSFEM-Coanda-Effect/blob/main/source/coanda.cpp
 
   template <int dim>
   void NS<dim>::make_grid()
@@ -1630,7 +1631,7 @@ int main(int argc, char *argv[])
 
     
     const bool distort_mesh{true};
-    const bool adaptive_refinement{false};
+    const bool adaptive_refinement{true};
 
 
     const unsigned int n_glob_ref{1};
@@ -1643,14 +1644,14 @@ int main(int argc, char *argv[])
     const double stopping_criterion{1e-7};
     
 
-    const double time_end{40};
+    const double time_end{70};
     const double delta_t{1e-2};
     const double output_interval{1e-1};
     const double refinement_interval{1e-0};
 
 
     const bool use_continuation{true};
-    const bool adaptive_refinement_after_continuation{true};
+    const bool adaptive_refinement_after_continuation{false};
     const double gamma{5};
     const double viscosity_begin_continuation{1.2};
     const double continuation_step_size{1e-2};

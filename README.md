@@ -1,12 +1,24 @@
-To run using MPI:
+The file `tutorial.md` constains a theoretical introduction to the material, as well as the commented code, and is structured in the style of a `deal.II` tutorial.
 
+The file which is actually compiled when using CMake is, of course, `main.cpp`.
+
+The folder `images` contains images needed for the tutorial, while the file `analysis.py` is just here for visualization purposes.
+
+Instruction for compilation:
+```bash
+mkdir build && cd build
+
+cmake -S ..
+# wait for the process to finish
+
+make
+```
+
+To run:
+```bash
+./main
+```
+or, using MPI:
 ```bash
 mpirun -np 4 ./main
 ```
-
-References:
-1) https://www.dealii.org/current/doxygen/deal.II/step_57.html (for Newton's method)
-2) https://www.dealii.org/current/doxygen/deal.II/code_gallery_time_dependent_navier_stokes.html (for parallelization and time-dependence)
-3) https://gitlab.com/lifex and in particular https://gitlab.com/lifex/lifex-cfd (for the SIMPLE preconditioner)
-4) https://github.com/ICGonnella/SSFEM-Coanda-Effect/blob/main/source/coanda.cpp (for the 2D mesh)
-5) https://onlinelibrary.wiley.com/doi/full/10.1002/fld.5118 (for the continuation algorithm)

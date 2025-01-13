@@ -7,15 +7,14 @@ An introduction to the problem, as well as the strategies used to solve it, are 
 ## The problem we want to solve
 Let us consider the strong form of the incompressible unsteady Navier-Stokes equations:
 ```math
-\begin{numcases}{}
+\begin{cases}
     \frac{\partial\boldsymbol{u}}{\partial t} + (\boldsymbol{u}\cdot\nabla)\boldsymbol{u} - \mu\Delta\boldsymbol{u} + \nabla p = \boldsymbol{f}, \quad\forall(\boldsymbol{x}, t)\in\Omega\times\mathbb{R}^+, \\
     \nabla\cdot \boldsymbol{u}= 0, \quad\forall(\boldsymbol{x}, t)\in\Omega\times\mathbb{R}^+
-\end{numcases}
+\end{cases}
 ```
 where $\mu\in\mathbb{R}^+$ represents the kinematic viscosity of the fluid, $\boldsymbol{f}\in L^2(\mathbb{R}^+; [L^2(\Omega)]^d)$ is a given force per unit volume and $\Omega\subseteq\mathbb{R}^d$ in which $d = 2, 3$.
 
-
-These equations describe the behaviour of an incompressible fluid of constant density $\rho\in\mathbb{R}^+$ and they need to be enhanced with initial conditions
+These equations need to be enhanced with initial conditions
 ```math
     \boldsymbol{u}(\boldsymbol{x}, 0) = \boldsymbol{u}_0(\boldsymbol{x}),\quad\forall\boldsymbol{x}\in\Omega,
 ```
@@ -31,19 +30,7 @@ in which $\boldsymbol{\psi}\in [L^2(\Gamma_D)]^d$ is also given.
 
 Here $\Gamma_D\subset\partial\Omega$ and $\Gamma_N\subset\partial\Omega$ are portions of the boundary of $\Omega$ on which, respectively, Dirichlet or Neumann boundary conditions are imposed, with $\Gamma_D\cup\Gamma_N=\partial\Omega$, $\mathring{\Gamma}_D\cap\mathring{\Gamma}_N=\emptyset$ and $|\Gamma_D|, |\Gamma_N|>0$.
 
-### Weak form of the Navier-Stokes equations
-The weak form of the Navier-Stokes system, endowed with initial and boundary conditions, can then be written as follows: find
-$\boldsymbol{u}\in L^2(\mathbb{R}^+; [H^1(\Omega)]^d)\cap C^0(\mathbb{R}^+; [L^2(\Omega)]^d)$ and $p\in L^2(\mathbb{R}^+; Q)$ such that
-```math
-\begin{numcases}{}
-\begin{aligned}
-    &\int_\Omega \frac{\partial \boldsymbol{u}}{\partial t}\cdot\boldsymbol{v}\, d\Omega + \int_\Omega \mu\nabla\boldsymbol{u}\cdot\nabla\boldsymbol{v} \, d\Omega + \int_\Omega [(\boldsymbol{u}\cdot\nabla)]\boldsymbol{u}\cdot\boldsymbol{v} \, d\Omega +\\
-    &\quad - \int_\Omega p\nabla\cdot\boldsymbol{v} \, d\Omega = \int_\Omega \boldsymbol{f}\cdot\boldsymbol{v} \, d\Omega + \int_{\Gamma_N} \boldsymbol{\psi}\cdot\boldsymbol{v} \, d\gamma,  \quad \forall \boldsymbol{v} \in V,
-\end{aligned} \\
-\int_\Omega q\nabla\cdot\boldsymbol{u} \, d\Omega = 0, \quad \forall q \in Q,
-\end{numcases}
-```
-in which the space $V = [H^1_{\Gamma_D}(\Omega)]^d = \{\boldsymbol{v}\in  [H^1(\Omega)]^d:\boldsymbol{v}\restriction_{\Gamma_D} = 0 \}$, and $Q=L^2(\Omega)$ if $\Gamma_N\neq\emptyset$, else $Q=L^2_0(\Omega)$.
+Notice that the continuity equation $\nabla\cdot \boldsymbol{u}= 0$ can be taken with the minus sign, as will be done in the following (more on that later).
 
 ### The Navier-Stokes equations in a channel
 A common problem in fluid dynamics is the study of the behavior of a fluid flow in a channel $\Omega$.
@@ -54,13 +41,43 @@ Formally, this corresponds to endowing the Navier-Stokes equations with stress f
 ```math
 \begin{cases}
 \begin{array}{ll}
-    \nabla\cdot \boldsymbol{u} = 0, & \quad \text{in } \Omega\times [0, T],\\
     \boldsymbol{u} = \boldsymbol{u}_{\text{inlet}}, & \quad \text{in } \Gamma_{\text{inlet}}\times [0, T],\\
     \boldsymbol{u} = 0, & \quad \text{in } \Gamma_0\times [0, T], \\
     -p\boldsymbol{n} + (\mu\nabla\boldsymbol{u})\cdot\boldsymbol{n} = 0, & \quad \text{in } \Gamma_{\text{out}}\times [0, T].
 \end{array}
 \end{cases}
 ```
+
+<figure>
+  <img src="images/channel.png" alt="Alt text" width="700">
+  <figcaption>The planar sudden-expansion channel considered in this project. Red denotes the outflow boundary, green the inlet, and black the walls on which no-slip condition is imposed.</figcaption>
+</figure>
+
+In this project, we consider a sudden-expansion channel, since the evolution of a fluid flow in in such a seeting can be seen as a simplified model of the _mitral valve regurgitation_, a heart disease characterized by the abnormal blood flow from the left ventricle to the left atrium, as a result of the defective closure of the mitral valve (see, e.g., the work by [Khamlich et al.](https://onlinelibrary.wiley.com/doi/full/10.1002/fld.5118), the one by [Pitton et al.](https://www.sciencedirect.com/science/article/abs/pii/S0021999117303790), by [Pichi](https://iris.sissa.it/handle/20.500.11767/114329), and so on).
+Indeed, a channel with a sudden expansion preserves the essential properties of the blood flow through the two heart chambers.
+In specific cases, this flow can show a wall-hugging behavior, leading to incorrect measurements of the blood volume through echocardiography.
+
+More details on this are going to be provided briefly.
+
+
+### Weak form of the Navier-Stokes equations
+The weak form of the Navier-Stokes system, endowed with initial and boundary conditions, can then be written as follows: find
+$\boldsymbol{u}\in L^2(\mathbb{R}^+; [H^1(\Omega)]^d)\cap C^0(\mathbb{R}^+; [L^2(\Omega)]^d)$ and $p\in L^2(\mathbb{R}^+; Q)$ such that
+```math
+\begin{cases}{}
+\begin{aligned}
+    &\int_\Omega \frac{\partial \boldsymbol{u}}{\partial t}\cdot\boldsymbol{v}\, d\Omega + \int_\Omega \mu\nabla\boldsymbol{u}\cdot\nabla\boldsymbol{v} \, d\Omega + \int_\Omega [(\boldsymbol{u}\cdot\nabla)]\boldsymbol{u}\cdot\boldsymbol{v} \, d\Omega +\\
+    &\displaystyle\quad - \int_\Omega p\nabla\cdot\boldsymbol{v} \, d\Omega = \int_\Omega \boldsymbol{f}\cdot\boldsymbol{v} \, d\Omega + \int_{\Gamma_N} \boldsymbol{\psi}\cdot\boldsymbol{v} \, d\gamma,  \quad \forall \boldsymbol{v} \in V,
+\end{aligned} \\
+\int_\Omega q\nabla\cdot\boldsymbol{u} \, d\Omega = 0, \quad \forall q \in Q,
+\end{cases}
+```
+in which the space $V = [H^1_{\Gamma_D}(\Omega)]^d = \{\boldsymbol{v}\in  [H^1(\Omega)]^d:\boldsymbol{v}\restriction_{\Gamma_D} = 0 \}$, and $Q=L^2(\Omega)$ if $\Gamma_N\neq\emptyset$, else $Q=L^2_0(\Omega)$.
+
+The weak form is obtained by multiplication by parts and using Green's formula; the procedure is here omitted due to time reasons and to the fact that it is standard.
+
+Recall that the condition on the space $Q$ stems form the fact that, if no Neumann DBCs are imposed, $p$ appears in the equations only through its gradient, and is therefore determined only up a constant. 
+
 
 ### Bifurcation problems: a symmetry-breaking bifurcation
 In CFD, difficulties might arise when the Reynolds number is high; in particular, there might be issue related to the uniqueness of the solution and transition of fluid flow stability.
@@ -69,22 +86,233 @@ These phenomena (as well as many other so-called _qualitative changes_) can be v
 
 Consider the general (strong) form of a parameterized PDE: for a given value of $\boldsymbol{\mu}\in\mathbb{P}\subset\mathbb{R}^p$, find $X\in\mathbb{X}$ such that
 ```math
-F(X; \boldsymbol{\mu}_{n})=0, \label{abstractPDE}
+F(X; \boldsymbol{\mu}_{n})=0
 ```
 with $F: \mathbb{X}\rightarrow\mathbb{X}'$.
 
-We say that $\boldsymbol{\mu^{\ast}}\in\mathbb{P}$ is a _bifurcation point_ for the PDE \eqref{abstractPDE} if there exists a sequence $(X_n, \boldsymbol{\mu}_n)$, $X_n$ being not trivial, such that:
+We say that $\boldsymbol{\mu^{\ast}}\in\mathbb{P}$ is a _bifurcation point_ for the PDE if there exists a sequence $(X_n, \boldsymbol{\mu}_n)$, $X_n$ being not trivial, such that:
 ```math
-    \begin{cases}
+    \begin{cases}{}
         F(X_n; \boldsymbol{\mu}_n)=0,  \quad\forall n\in\mathbb{N} \\
          (X_n, \boldsymbol{\mu}_n)\rightarrow (\bar{X},\, \boldsymbol{\mu^{\ast}}).
     \end{cases}
 ```
 
-While a formal introduction to bifurcation theory (e.g. studying the relationship between bifurcation points and the implicit function theorem and so in) is not possible here for time reason, there are two main aspects related to bifurcations which are of practical importance:
-- there exists a critical point $\mu^\ast$ after which the uniqueness of the solution is no longer guaranteed
+
+The manifold formed by the solutions with the same qualitative behavior is called _branch_ and is denoted by $\mathcal{M}$.
+The _solution manifold_ is given by the union of all the branches:
+```math
+\mathcal{S} = \bigcup_{i = 1}^k\mathcal{M}_i\coloneqq \bigcup_{i=1}^k\{X_i(\boldsymbol{\mu})\in\mathbb{X}: F(X_i(\boldsymbol{\mu}); \,\boldsymbol{\mu}) = 0,\, \boldsymbol{\mu}\in\mathbb{P}\}.
+```
+
+We remark that there exists a so-called _trivial solution_ (here, just for notational purposes, assumed to be $X = 0$), such that for every parameter $\boldsymbol{\mu}\in\mathbb{P}$, namely $F(0;\, \boldsymbol{\mu}) = 0,\, \forall\boldsymbol{\mu}\in\mathbb{P}$. We can also define the set  of non-trivial solutions as
+$\mathcal{N} = \{(X, \boldsymbol{\mu})\in \mathbb{X} \times \mathcal{P} : X\neq 0,\, F(X;\, \boldsymbol{\mu})= 0,\, \forall\boldsymbol{\mu}\in\mathbb{P} \}$.
+
+
+While more detailed introduction to bifurcation theory (e.g. studying the relationship between bifurcation points and the implicit function theorem, and so on) is not possible here for time reason, there are two main aspects related to bifurcations which are of practical importance:
+- there exists a critical point $\mu^\ast$ after which the uniqueness of the solution is no longer guaranteed, and multiple solutions could branch off from a reference, ground-state solution;
 - various branches of solutions might have different _stability_ properties, making them _physical_ or _unphysical_.
 
+---
+
+The problem of the N-S equations in the considered geometry is indeed a bifurcation problem, when considering the parameter range, for instance, to be $\mathbb{P}=[0.5, 1.2]$.
+
+Indeed, while for values of $\mu> 0.96$ there is only one possible, symmetrical solution, for $\mu\approx 0.96$ a bifurcation happens, and three possible solutions are possible: the symmetrical one, and two asymmetrical ones, each one of them display a wall-hugging behaviour towards either the upper or the lower wall.
+
+It is important to stress that the asymmetrical solutions are stable, while the symmetrical one is not.
+
+
+<div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; text-align: center;">
+  <div>
+    <img src="images/unstable_branch.png" alt="Image 1" width="500" height="auto">
+    <p>Symmetrical, unstable solution</p>
+  </div>
+  <div>
+    <img src="images/stable_branch.png" alt="Image 2" width="500" height="auto">
+    <p>One of the two asymmetrical, stable solutions</p>
+  </div>
+</div>
+
+
+# Finite Element discretization
+Once we have fixed two finite-dimensional spaces $V_h\subset V$ and $Q_h\subset Q$ for velocity and pressure, it is possible to impose that the weak form of the problem only holds on a basis of these two spaces.
+
+In the followin, we omit the dependence on $\mu$ for notational purposes.
+
+For every $t>0$, we then look for $(\boldsymbol{u}_h(t), p_h(t))\in V_h\times Q_h$ such that
+```math
+\begin{cases}{}
+    \begin{aligned}
+    &\left(\frac{\partial\boldsymbol{u}_h}{\partial t}(t), \boldsymbol{v}_h\right) + a(\boldsymbol{u}_h(t),\boldsymbol{v}_h) + c(\boldsymbol{u}_h(t), \boldsymbol{u}_h(t), \boldsymbol{v}_h) + b(\boldsymbol{v}_h, p_h(t))\\
+    &\qquad\qquad\qquad= \left(\boldsymbol{f}_h(t), \boldsymbol{v}_h\right) \quad\forall\boldsymbol{v}_h\in V_h,
+    \end{aligned}\\
+    \begin{aligned}
+    b(\boldsymbol{u}_h(t), q_h) = 0, \quad\forall q_h\in Q_h,
+    \end{aligned}
+\end{cases}
+```
+where
+```math
+    a(\boldsymbol{u_h}, \boldsymbol{v_h}) = \int_\Omega\mu\nabla\boldsymbol{u_h}\cdot\nabla\boldsymbol{v_h}d\Omega,\qquad
+    b(\boldsymbol{u_h}, q_h) = -\int_\Omega q_h\text{div}\boldsymbol{u_h}d\Omega
+```
+and
+```math
+    c(\boldsymbol{w_h}, \boldsymbol{z_h}, \boldsymbol{v_h}) = \int_\Omega[(\boldsymbol{w_h}\cdot\nabla)\boldsymbol{z_h}]\cdot\boldsymbol{v_h}d\Omega, \quad\forall\boldsymbol{w_h}, \boldsymbol{v_h}, \boldsymbol{z_h}\in V_h.
+```
+
+---
+Let us consider $\{\boldsymbol{\varphi}_j\in V_h\}$ and $\{\phi_k\in Q_h\}$ two basis, respectively, of $V_h$ and $Q_h$.
+Following the standard FE theory, we can then express $\boldsymbol{u}_h$ and $p_h$ as follows:
+```math
+    \boldsymbol{u}_h(\boldsymbol{x}, t) = \sum_{j = 1}^{N_h} u_j(t)\boldsymbol{\varphi}_j(\boldsymbol{x}),\qquad
+    p_h(\boldsymbol{x}, t) = \sum_{k = 1}^{M_h}p_k(t)\phi_k(\boldsymbol{x}),
+```
+where $N_h = \text{dim}(V_h)$ and $M_h = \text{dim}(Q_h)$.
+
+Our problem can then be rewritten in the following way:
+```math
+\begin{cases}{}
+    \displaystyle M\frac{\partial\boldsymbol{u}(t)}{\partial t} + A\boldsymbol{u}(t) + C\left(\boldsymbol{u}(t)\right)\boldsymbol{u}(t) +  B^T\boldsymbol{p}(t) = \boldsymbol{f}(t) \\ 
+    -B\boldsymbol{u}(t) = \boldsymbol{0},
+\end{cases}
+```
+with $\boldsymbol{u}(0) = \boldsymbol{u}_0$.
+
+In the previous equation, $\boldsymbol{u}(t) = (u_j(t))_j\in\R^{N_h}$, $M\in\R^{N_h\times N_h}$ is the mass matrix, whose element in position $(l, r)$ is given by
+```math
+    m_{lr} = \int_\Omega \boldsymbol{\varphi}_l\cdot\boldsymbol{\varphi}_rd\Omega, \qquad a_{ij} = a(\boldsymbol{\varphi}_i, \boldsymbol{\varphi}_j) \qquad \text{and} \qquad b_{km} = b(\boldsymbol{\varphi}_m, \phi_k)
+```
+i.e. $A$ and $B$ are the matrices associated to the bilinear forms $a$ and $b$ respectively; finally $C(\boldsymbol{u}(t))$ is a matrix depending on $\boldsymbol{u}(t)$ whose element in position $(n, s)$ is given by $c_{n, s}(t) = c(\boldsymbol{u}(t), \boldsymbol{\varphi}_n, \boldsymbol{\varphi}_s)$.
+
+We are now interested in a temporal discretization of the problem, which can be done, for instance, introducing a $\theta$-method.
+
+Assuming a mesh has been introduced in the time interval considered and having set $\Delta t = t_{n+1}-t_n$, we introduce the following  notation:
+```math
+    \boldsymbol{u}_{\theta}^{n+1} = \theta\boldsymbol{u}^{n+1} + (1-\theta)\boldsymbol{u}^n, \qquad \boldsymbol{p}_{\theta}^{n+1} = \theta\boldsymbol{p}^{n+1} + (1-\theta)\boldsymbol{p}^n,
+```
+```math
+    \boldsymbol{f}_{\theta}^{n+1} = \theta\boldsymbol{f}^{n+1} + (1-\theta)\boldsymbol{f}^n, \qquad C_\theta(\boldsymbol{u}^{n+1})\boldsymbol{u}^{n+1} = \theta C(\boldsymbol{u}^{n+1})\boldsymbol{u}^{n+1} + (1-\theta) C(\boldsymbol{u}^n)\boldsymbol{u}^n.
+```
+
+This leads to a system of of algebraic equations, after writing
+```math
+\begin{cases}{}
+    M\frac{\boldsymbol{u}^{n+1}-\boldsymbol{u}^n}{\Delta t} + A\boldsymbol{u}_{\theta}^{n+1}+ C_\theta(\boldsymbol{u}^{n+1})\boldsymbol{u}^{n+1} + B^T\boldsymbol{p}_\theta^{n+1} = \boldsymbol{f}_\theta^{n+1}\\
+    B\boldsymbol{u}^{n+1} = \boldsymbol{0}.
+\end{cases}
+```
+
+We remark that a slight modification of this approach can be used, with a tweak being involved at each time step.
+It consists in replacing $B^T\boldsymbol{p}_\theta^{n+1}$ with $B^T\boldsymbol{p}^{n+1}$, i.e. we [advance implicitly the term involving pressure](https://www.sciencedirect.com/science/article/abs/pii/S004578250500455X), as done frequently in literature.
+
+We also multiply the second equation by $-1$.
+
+With that being said, The numerical method then reads as follows: at each time step, the approximated solution can be computed by solving the non-linear system
+
+```math
+\begin{cases}{}
+    M\frac{\boldsymbol{u}^{n+1}-\boldsymbol{u}^n}{\Delta t} + A\boldsymbol{u}_{\theta}^{n+1}+ C_\theta(\boldsymbol{u}^{n+1})\boldsymbol{u}^{n+1} + B^T\boldsymbol{p}^{n+1} = \boldsymbol{f}_\theta^{n+1} \\
+    -B\boldsymbol{u}^{n+1} = \boldsymbol{0}.
+\end{cases}
+```
+
+Remark that, consistently with what is done in step 57, the second equation could be considered without taking into account the minus sign.
+Since the steady Navier-Stokes equations will be solved as well, and to ensure consistency w.r.t. step 57, the equation is considered without the minus sign solving the steady problem, and with it considering the unsteady version of the equations.
+
+For notational purposes, we define
+```math
+\mathcal{\boldsymbol{F}}^{n+1}(\boldsymbol{u}, p) = 
+\begin{bmatrix}
+ M\frac{\boldsymbol{u}^{n+1}-\boldsymbol{u}^n}{\Delta t} + A\boldsymbol{u}_{\theta}^{n+1}+ C_\theta(\boldsymbol{u}^{n+1})\boldsymbol{u}^{n+1} + B^T\boldsymbol{p}^{n+1} - \boldsymbol{f}_\theta^{n+1} \\
+    -B\boldsymbol{u}^{n+1}.
+\end{bmatrix}
+```
+
+Always for notational purposes, we stress that $(\boldsymbol{u}, p)$ is to be interpreted as $[\boldsymbol{u}, p]^T$, and similiarly for the other quantities under investigation.
+
+---
+
+Recall that particular care must be taken in the choice of the function spaces $V_h$ and $Q_h$: while using polynomials of high order might result in a procedure which is excessively demanding from a computational point of view, the _inf-sup_ condition needs to be satisfied in order to ensure stability and to avoid the  occurrence of the so called _spurious pressure modes_ (more details regarding this aspect can be found in [Quarteroni's book](https://link.springer.com/book/10.1007/978-88-470-5522-3)).
+
+We will stick with the standard choice of Taylor-Hood pairs $\mathbb{Q}^{k+1}-\mathbb{Q}^k$, with $k\geq 1$.
+
+## Linearization of the Navier-Stokes equations
+It is possible to linearize the system we ended up with using Newton's method, as done in [step 57](https://www.dealii.org/current/doxygen/deal.II/step_57.html).
+
+Since it is straightforward to compute $\mathcal{\boldsymbol{F}}^{n+1}(\boldsymbol{u}_h, \boldsymbol{v}_h)[(\delta\boldsymbol{u}_h, \delta\boldsymbol{v}_h)]$, we skip the computation, and only write the resulting jacobian matrix resulting:
+```math
+\mathcal{J}(\boldsymbol{u}, p) = \begin{bmatrix} 
+F & B^T \\ 
+-B & 0 
+\end{bmatrix},
+```
+in which $B$ is as before  and $F = \frac{1}{\Delta t}M + A + C(\boldsymbol{u})$, with $\boldsymbol{u}\in\mathbb{R}^{N_h}$ and $p\in \mathbb{R}^{M_h}$.
+
+Here, the element in position $(i,j)$ of $C(\boldsymbol{u})$ is given by
+```math
+C(\boldsymbol{u})_{ij} = \int_\Omega (\boldsymbol{\varphi}_j\cdot\nabla\boldsymbol{u} + \boldsymbol{u}\cdot\nabla\boldsymbol{\varphi}_j)\cdot \boldsymbol{\varphi}_i
+```
+In the previous equation, with a slight abuse of notation, we denoted by $\boldsymbol{u}$ the vector given by $\sum_{j = 1}^{N_h} u_j\boldsymbol{\varphi}_j$.
+
+
+At each time step $n+$, the equation to be solved at each iteration of the method is then the usual one.
+Given an initial guess $(\boldsymbol{u}_0, p_0)$, at each step $k+1$ solve for the update $(\delta\boldsymbol{u}_{k+1}, \delta p_{k+1}) = (\boldsymbol{u}_{k+1}-\boldsymbol{u}_{k}, p_{k+1}-p_{k})$ the equation:
+```math
+\mathcal{J}(\boldsymbol{u}_k, p_k)[(\delta\boldsymbol{u}^{k+1}, \delta p^{k+1})] = -\mathcal{\boldsymbol{F}}^{n+1}(\boldsymbol{\boldsymbol{u}_k, p_k})
+```
+
+
+
+## Continuation algorithm
+When dealing with bifurcation problems, it is of utmost importance to be able to reconstruct a specific branch in a neighborhood of the critical parameter value for which uniqueness is lost, i.e.\ to follow a desired branch while varying the value of the parameter.
+In this framework, several _continuation algorithms_ (see, for instance, [Keller's lectures](https://mathweb.tifr.res.in/sites/default/files/publications/ln/tifr79.pdf)) have been developed in the literature, which aim at generating a sequence of solutions belonging to the same branch.
+
+We describe now a simple example of continuation algorithm.
+Start by considering a discrete version $\mathbb{P}_h\subset\mathbb{P}$ of the parameter space and assume that for a given value of the parameter $\boldsymbol{\mu}$ the corresponding full order solution $\boldsymbol{X}_h(\boldsymbol{\mu}_j)$ is known.
+
+We are interested in computing the solution $\boldsymbol{X}_h(\boldsymbol{\mu}_{j+1})$ for the following value of the parameter $\boldsymbol{\mu}_{j+1}$.
+
+The key point of this continuation algorithm is to use as initial guess for Newton's method a suitable initial guess depending on $\boldsymbol{X}_h(\boldsymbol{\mu}_{j})$. The simplest choice is to use directly the solution $\boldsymbol{X}_h(\boldsymbol{\mu}_{j})$ itself, even though there exist more elaborated strategies allowing to automatically discover new branches.
+
+For this methodology, the choice of the step $\Delta \boldsymbol{\mu} = \boldsymbol{\mu}_{j+1} - \boldsymbol{\mu}_{j}$ is crucial: if it is too big, the bifurcating behaviour might not be detected, while if it is too small, then it might lead to a waste of computational resources, especially when far from the bifurcation point.
+
+We stress that continuation algorithms can be exploited as important tools for reconstructing bifurcations diagrams.
+
+Also, remark that this is the actual strategy used in step 57, even though in that case it was not meant to be used for branch discovery.
+
+---
+
+We also underline that, while the use of a continuation algorithm can turn out to be crucial in some scenarios, the computational mesh also plays a huge role in bifurcation problems, as pointed out, e.g. by [Gonnella et al.](https://arxiv.org/abs/2402.16803) in her last paper.
+
+### The algorithm in the unsteady case
+The simplest and most intuitive idea for a continuation algorithm in the time-dependent case would be to solve the steady problem using a continuation algorithm, obtaining an asymmetrical solution $(\boldsymbol{u}_\text{steady}, p_{\text{steady}})$, and to pass it as initial guess to the nonlinear solver.
+
+However, there are two criticalities related to this first, naive idea:
+- at the beginning of time stepping, when we are very far away from the steady solution, it is possible that the initial guess is "too far", slowing down convergence and making the use of the method much slower and more computationally demanding;
+- related to the first one: the steady solution could be so much "far away" from the actual solution at the next time step that Newton's method does not even converge!
+
+To overcome this issues, I have decided to introduce the following approach:
+
+- compute $(\boldsymbol{u}_\text{steady}, p_{\text{steady}})$ using a continuation algorithm;
+- at the beginning of each time step, for $n>1$, compute the relative distance in the $L_2$ norm between the steady solution and the solution at the previous time step $(\boldsymbol{u}^{n}, p^n)$, and call it $\alpha^{n+1}$.
+Then we have that $\displaystyle\alpha^{n+1} = \frac{\|(\boldsymbol{u}^{n}, p^n)-(\boldsymbol{u}_\text{steady}, p_{\text{steady}})\|_2}{\|(\boldsymbol{u}^{n}, p^n)\|_2}$;
+- as initial guess for the nonlinear solver, pass the quantity given by $\displaystyle\alpha^{n+1}(\boldsymbol{u}^{n}, p^n) + (1-\alpha^{n+1})(\boldsymbol{u}_\text{steady}, p_{\text{steady}})$.
+
+This way, we have that, for each $n$, $\alpha^{n+1}\in [0,1]$, since the norm of the solution increases with time.
+Moreover,  $\alpha^{n+1} = 0$ if and only if the previous solution coincides with the steady state, in which case we can stop integration.
+
+For all values of $\alpha^{n+1}$ strictly included bewteen $0$ and $1$, the goal of such a strategy is to ensure convergence of the Newton method by weighting the steady solution _more_ as time passes, yet still giving some bias to the nonlinear solver regarding the fact that we are _expecting_ the solution belonging to a given branch.
+
+# A note on the code in `deal.II`
+The code has been structured in order to be flexible by creating a `NS` which accepts plenty of parameters related to the numerical discretization of the problem.
+
+Throughout the code, error handling and other modern C++ features (such as uniform initialization) have been used as often as possible.
+
+Chuncks of code coming from existing `deal.II` tutorials or code gallery are coupled with the link to the corresponding source.
+Newly written code or important modifications are justified at the time they are introduced.
+
+The code can run in parallel using MPI.
 
 
 # Utilities
@@ -340,10 +568,11 @@ To help solving the linear system needed for Newton's method, we need good preco
 
 ### The `SIMPLE` preconditioner
 For the unsteady Navier-Stokes equations, a good preconditioner is needed.
-Here, we consider the e _Semi-Implicit Method for Pressure Linked Equations_ (SIMPLE), which can be seen as associated to a preconditioner. 
+Here, we consider the e _Semi-Implicit Method for Pressure Linked Equations_ (SIMPLE), which can be seen as associated to a preconditioner.
 
-Its implementation in the following is largely based on the one available in [lifex-cfd](https://gitlab.com/lifex/lifex-cfd/-/tree/main/source/helpers), for which we also refer the interested reader for further references.
-The only thing which is altered here is that I got rid on the dependence of SIMPLE on other $\text{life}^\text{x}$ helper functions.
+
+
+The implementation of the `SIMPLE` class in the following is largely based on the one available in [lifex-cfd](https://gitlab.com/lifex/lifex-cfd/-/tree/main/source/helpers), for which we also refer the interested reader for further references (though we also cite the paper by [Deparis et al.](https://www.sciencedirect.com/science/article/abs/pii/S0045793013004179)).
 
 For completeness, a defintion of the SIMPLE preconditioner is provided.
 Recall that the matrix resulting from a discretization of the Navier-Stokes equations can be expressed as follows:
@@ -351,10 +580,9 @@ Recall that the matrix resulting from a discretization of the Navier-Stokes equa
 \mathcal{J} = \begin{bmatrix} 
 F & B^T \\ 
 -B & S 
-\end{bmatrix},
+\end{bmatrix}.
 ```
-in which $F = \frac{1}{\Delta t} M + A + C(\mathbf{U}^n)$, and $C(\mathbf{U}^n)$ is given by the (linearized) convection terms of
-the momentum equation.
+In our case, we have that $S=0$; however, this notation takes into account more general scenarios, in which e.g. constraints are imposed in the block $(1,1)$ (counting starts from $0$, as in C++).
 
 The SIMPLE preconditioner is defined as:
 ```math
@@ -370,10 +598,19 @@ I & D^{-1}B^T \\
 in which $D = \mathrm{diag}(F)$ is a diagonal matrix obtained from the diagonal entries of $F$, and $\widetilde{\Sigma} = S + BD^{-1}B^T$ is an approximation of the Schur complement.
 In this approximation, replacing $F^{-1}$ with $D^{-1}$ allows explicit assembly of the matrix.
 
+Remark that, since in our case $S=0$, we can think of the SIMPLE preconditioner as a block $LU$ factorization.
+
 To use the preconditioner, it is necessary to compute the application of its inverse to a vector, that is, $P_\mathrm{SIMPLE}^{-1} \mathbf{x}$.
 This operation, in turn, requires computing the inverses of $F$ and $\widetilde{\Sigma}$.
 
 To do so, $F$ and $\widetilde{\Sigma}$ are approximated, and we refer to the method obtained in this way as _aSIMPLE_ (approximate SIMPLE).
+
+Recalling that we can write $P_{\text{SIMPLE}}=LU$, it is equivalent to write $P_{\text{SIMPLE}}^{-1}x$ or $U^{-1}L^{-1}x$.
+Hence, to compute $P_{\text{SIMPLE}}^{-1}x$, we can first solve $Ly = \text{src}$ trough the `vmult_L` method, and then $Ux = y$, using `vmult_U`.
+
+
+The only thing which is altered here is that I got rid on the dependence of SIMPLE on other $\text{life}^\text{x}$ helper functions.
+
 
 ---
 #### `SIMPLE` helpers
@@ -607,7 +844,7 @@ Also in this situation, the choice to use a direct solver (in line with what was
 Since no other novelties with respect to step 57 are introduced, no further comments are provided on this topic, and we refer the interested reader to the aforementioned tutorial and the references therein.
 
 We remark, as explained in [the paper by Benzi et al.](https://epubs.siam.org/doi/epdf/10.1137/050646421), that the bigger the value of $\gamma$, the closer to the original system the new one is. However, issue might arise for high values of $\gamma$, as this choice makes the system ill-conditioned.
-In general, the auto
+In general, the author suggest to chose $\gamma = O(1)$.
 
 This stabilization technique has been proven to work well with direct solvers (as it is the case here), even though no clear answer has been provided regarding a preconditioner an iterative solver to be used in relation to the ratio $\frac{\mu}{\gamma}$.
 
@@ -941,6 +1178,8 @@ Its only actions are to instantiate most of the attributes of the class, and to 
 ## The `make_grid` method
 This method creates a triangulation covering the domain considered in this project.
 An interesting remark is that `GridGenerator::subdivided_hyper_rectangle` needed to be used instead of `GridGenerator::hyper_rectangle`, as the latter yielded cells which were too stretched (here, instead, the aspect ratio of cells is closer to 1).
+
+This method is mostly based on the code written by [Gonnella for her most recent paper](https://github.com/ICGonnella/SSFEM-Coanda-Effect/blob/main/source/coanda.cpp), though with some tweaks and the addition of the 3D computational mesh.
 ```cpp
   template <int dim>
   void NS<dim>::make_grid()
@@ -1717,7 +1956,7 @@ The only difference of this implementation with respect to the one in the `deal.
 As the name suggests, this method is called in order to perform mesh refinement.
 It takes as input two different (unsigned) integers, and a boolean.
 
-The two numbers correspond to the minimum grid level and the maximum one, which determine how the refinement is performed (avoiding that the level of refinement and coarsening of the cells are not included in the $\{\text{min_grid_level}, \dots, \text{max_grid_level}\}$ ).
+The two numbers correspond to the minimum grid level and the maximum one, which determine how the refinement is performed (avoiding that the level of refinement and coarsening of the cells are not included in the set $\{$ `min_grid_level` $,\dots,$ `max_grid_level` $\}$ ).
 
 The flag `is_before_time_stepping`, instead, is passed if and only if we have chosen to use the continuation algorithm, and decided to refine the mesh before time-stepping.
 The estimator which is used is Kell's one, and it is applied either to `present_solution` or (if `is_before_time_stepping` is `true`), to `steady_solution`.
@@ -2049,7 +2288,15 @@ int main(int argc, char *argv[])
 # Numerical results
 This section is devoted to a presentation of the results obtained using the code introduced here.
 
-All the following experiments have been perfomed considering the same initial mesh (with `n_glob_ref` = 1), stepsize in time equal to $dt=1e-2$, `jacobian_update_step`=3, `fe_degree`=1, `viscosity_begin_continuation`=1.2, $\mu=0.5$ and $\theta = \frac{1}{2}$.
+All the following experiments have been perfomed considering:
+- the same initial mesh, with `n_glob_ref` = 1;
+- stepsize in time equal to $dt=10{^-2}$;
+- `jacobian_update_step`=3;
+- `fe_degree`=1;
+- `viscosity_begin_continuation`=1.2; 
+- $\mu=0.5$;
+- $\theta = \frac{1}{2}$;
+- `stopping_criterion` = $10^{-7}$.
 
 The experiments have been performed taking into account the 2D geometry, since the lower number of DoFs allowed to perform more experiments and get a better understanding of the phenomenon.
 
@@ -2198,37 +2445,109 @@ Also here, we plot the residual and the relative distance $\displaystyle\frac{\|
   </div>
 </div>
 
-Also in this case, the two quantities under investigation exhibit similar qualitative behavior.
+Also in this case, the two quantities under investigation exhibit similar qualitative behaviour.
 
 However, the behaviour of these quantities is qualitatively different from the case described before: after the initial phase in which the relative distance decreases, it does not stabilize around a fixed quantities.
-Instead, it reaches a local minimum corresponding to the instant of time in which the symmetrical configuration is reached.
+Instead, it reaches a minimum corresponding to the instant of time in which the symmetrical configuration is reached.
 
-As the solution begins to bend towards a wall, the relative distance starts to increase, and then eventually decreases, until it reaches a global minimum when the steady state is reached.
+As the solution begins to bend towards a wall, the relative distance starts to increase, and then eventually decreases until the steady state is reached.
+
+Also, while in the steady case the relative distance reached $10^{-6}$ pretty early, here this did not happend for a much longer time.
 
 ---
 The two take-home messages are the following:
 - mesh refinement on its own might not be sufficient to allow observing the bifurcating behaviour of the solution;
-- the threshold $\tau$ (that is, `stopping criterion`) is crucial to observe the bifurcating behaviour: even for relatively low values, such as $10^{-4}$, it is possible to overlook the bifurcation, mistakenly assuming that the steady state has been already reached!
+- the threshold $\tau$ (that is, `stopping_criterion`) is crucial to observe the bifurcating behaviour: even for relatively low values, such as $10^{-4}$, it is possible to overlook the bifurcation, mistakenly assuming that the steady state has been already reached!
 
 
 
 
+## Distorted mesh, with a continuation algorithm, but mesh refinement performed (twice) just after continuation
+For this test, mesh refinement is not performed in time; instead, it is performed after continuation.
+The reason for this is the following: if the continuation algorithm yields an asymmetrical solution, the mesh will be refined in order to "follow" the solution, hence becoming asymmetrical.
 
+We want to find out whether or not this trick can recover a time-dependent solution belonging to the same branch of the steady one (unlike the case previously observed using mesh refinement).
 
+### Steady system
+The situation in the steady case is exactly the one descibed above and it is not explained once again here.
 
-## Distorted mesh, with a continuation algorithm, but mesh refinement
+The mesh after refinement looks like this:
+<figure>
+  <img src="images/asymm_mesh_2/mesh.png" alt="Alt text" width="500">
+  <figcaption>The computational mesh.</figcaption>
+</figure>
+It can be seen that it is not symmetrical.
+
+### Time-stepping
+After the mesh refinement has been performed, we integrate in time, now without refining.
+
+This time, we can see that the system evolves until it reaches the stable solution belonging to the *same* branch as the steady solution
+
+<div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; text-align: center;">
+  <div>
+    <img src="images/asymm_mesh_2/t_0.1.png" alt="Image 1" width="400" height="auto">
+    <p>t=0.1</p>
+  </div>
+  <div>
+    <img src="images/asymm_mesh_2/t_1.0.png" alt="Image 2" width="400" height="auto">
+    <p>t=1</p>
+  </div>
+  <div>
+    <img src="images/asymm_mesh_2/t_20.0.png" alt="Image 3" width="400" height="auto">
+    <p>t=20</p>
+  </div>
+  <div>
+    <img src="images/asymm_mesh_2/t_30.0.png" alt="Image 4" width="400" height="auto">
+    <p>t=30</p>
+  </div>
+  <div>
+    <img src="images/asymm_mesh_2/t_40.0.png" alt="Image 4" width="400" height="auto">
+    <p>t=40</p>
+  </div>
+    <div>
+    <img src="images/asymm_mesh_2/t_60.0.png" alt="Image 4" width="400" height="auto">
+    <p>t=60</p>
+  </div>
+</div>
+
+Also, notice the longer evolution times here w.r.t. the previous example.
+This detail suggests that the wall-hugging behaviour in this setting is likely the result of numerical "noise", and depends on the amount of it which is introduced.
+
+---
+
+We plot the relative distances and the residual.
+While the global behaviour is not altered w.r.t what was seen before, now the line is smoother as a consequence of the fact that refinement is not used.
+<div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; text-align: center;">
+  <div>
+    <img src="images/asymm_mesh_2/relative_distances.png" alt="Image 1" width="400" height="auto">
+    <p>Relative distance</p>
+  </div>
+  <div>
+    <img src="images/asymm_mesh_2/residuals.png" alt="Image 2" width="400" height="auto">
+    <p>Residual</p>
+  </div>
+</div>
+
+---
+Here, the additional conclusion which we can draw is that not only the computational mesh affects our ability to find _other_ solutions when dealing with bifurcating phenomena, but we could even be able to tweak it in such a way that we get the solution we actually want!
+
+## Profiling: some notes on efficiency
+ADD SOMETHING ABOUT CODE EFFICIENCY 
 
 
 # Conclusions:
-This project allowed to investigate the interplay between mesh properties, mesh refinement and continuation algorithms in the unsteady case of a well-known benchmark in literature.
+This project allowed to investigate the interplay between mesh properties, mesh refinement and continuation algorithms in the unsteady case of a known benchmark in literature.
 
+The experiments are in complete accordance with what was observed in preliminary investigations using FEniCS.
+However, the depth at which they were carried out is much bigger: aspects which have been investigate here include the use of a continuation algorithm, mesh refinement (both during time-stepping and after continuation), different mesh properties (symmetry, distortion) and so on.
 
-Remarkably, the experiments are in complete accordance with what was observed in preliminary investigations using FEniCS.
-Remark that symmetrical meshes tend to perform poorly on this kind of problems, as seen by this study and pointed out by [Quaini et al.](https://www.tandfonline.com/doi/abs/10.1080/10618562.2016.1144877).
-
+Summarizing, we can convey the following message: while it is known that symmetrical meshes might perform poorly in the case of bifurcating phenomena (as pointed out by [Quaini et al.](https://www.tandfonline.com/doi/abs/10.1080/10618562.2016.1144877)), it is also true that simple tweaks like distortion and refinement can be turn out to be useful in recovering the desired solution and providing a way to reconstruct the bifurcation diagram.
 
 # Possible extensions
 A few ideas include:
-- finding a suitable iterative method/preconditioner for the `SIMPLE` and `BlockSchurPreconditioner` inner linear systems with the `(0,0)` block of $F$
-- performing numerical experiment in the 3D case (related to the previous one). Still to be studied in literature, using this geometry!
-- experimenting with different kinds of meshes (tetrahedral ones, more irregular ones)
+- finding a suitable iterative method/preconditioner for the `SIMPLE` and `BlockSchurPreconditioner` inner linear systems with the `(0,0)` block of $F$. This would allow to scale better and use more "aggressive" forms of mesh refinement or more complex problems;
+- performing numerical experiment in the 3D case. Still to be studied in literature, using this geometry!
+- experimenting with different kinds of meshes (tetrahedral ones, more irregular ones).
+
+# References
+All the references cited throughout this tutorial are linked in order to make them easily accessible.

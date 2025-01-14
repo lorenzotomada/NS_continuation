@@ -1,12 +1,3 @@
-/* -----------------------------------------------------------------------------
- TODO:
-    1) Perform tests
-      1.1) A good one with mesh refinement in time and continuation
-    2) Maybe: assemble matrices not depending on the mesh just once after each mesh refinement
-* ------------------------------------------------------------------------------ */
-
-
-
 #include <deal.II/base/function.h>
 #include <deal.II/base/logstream.h>
 #include <deal.II/base/quadrature_lib.h>
@@ -242,6 +233,7 @@ namespace coanda
   {
     PETScWrappers::MPI::SparseMatrix tmp_mat;
     src.block(1, 0).mmult(tmp_mat, src.block(0, 1), diag_A00_inverse);
+
     dst = 0.0;
     dst.add(1.0, tmp_mat);
     dst.add(-1.0, src.block(1, 1));
@@ -439,13 +431,16 @@ namespace coanda
   
     void vmult(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const;
   
+
     private:
     TimerOutput &timer;
     const double gamma;
     const double viscosity;
-  
+
+
     const SmartPointer<const PETScWrappers::MPI::BlockSparseMatrix> jacobian_matrix;
     const SmartPointer<PETScWrappers::MPI::SparseMatrix> pressure_mass_matrix;
+
 
     SolverControl tmp_solver_control;
     mutable PETScWrappers::SparseDirectMUMPS A_solver;
@@ -712,7 +707,7 @@ namespace coanda
 
 // -------------------- CREATE THE GRID --------------------
 
-// https://github.com/ICGonnella/SSFEM-Coanda-Effect/blob/main/source/coanda.cpp
+// https://github.com/ICGonnella/SSFEM-Coanda-Effect/blob/main/source/coanda.cpp as a reference for the 2D case
 
   template <int dim>
   void NS<dim>::make_grid()
@@ -727,6 +722,7 @@ namespace coanda
       std::vector<unsigned int> subdivisions{45, 10};
       GridGenerator::subdivided_hyper_rectangle(rectangle, subdivisions, Point<2>(0, 0), Point<2>(50, 7.5));
     }
+
     else
     {
       std::vector<unsigned int> subdivisions{50, 8, 8};
@@ -748,14 +744,18 @@ namespace coanda
 
       for (unsigned int v = 0; v < GeometryInfo<dim>::vertices_per_cell; ++v)
       {
-        bool before_10_x_coord{cell->vertex(v)[0]<10};
-        double v1{cell->vertex(v)[1]};
+        bool before_10_x_coord{cell->vertex(v)[0]<10}; // check if we are at the inlet
+
+        double v1{cell->vertex(v)[1]}; // check the y coordinate of the vertex 
+
         bool first_check{(v1 > 5.0 && v1 < 7.5) || (v1 < 2.5)};
-        if constexpr (dim == 2) 
+
+        if constexpr (dim == 2) // no need to check anything for the z component as we are in 2D
         { 
           if (before_10_x_coord && first_check)
             inside_domain = false; // if dim==2, it is a sufficient condition to be in the inlet
         }
+
         else // otherwise we need to check also the z component
         {
           double v2{cell->vertex(v)[2]};
@@ -775,25 +775,25 @@ namespace coanda
     GridGenerator::create_triangulation_with_removed_cells(rectangle, cells_to_remove, triangulation);
 
 
-    for (const auto &face : triangulation.active_face_iterators()) {
+    for (const auto &face : triangulation.active_face_iterators())
+    {
       if (face->at_boundary())
       {
         double face_center{face->center()[0]};
-        if (std::fabs(face_center) < 1e-12)
+        const double tolerance{1e-10};
+
+        if (std::fabs(face_center) < tolerance)
           face->set_boundary_id(1); // Inlet boundary
+        else if (std::fabs(face_center - 50.0) < tolerance)
+          face->set_boundary_id(2); // Outer boundary
         else
-        {
-          if (std::fabs(face_center - 50.0) < 1e-12)
-            face->set_boundary_id(2); // Outer boundary
-          else
-            face->set_boundary_id(3); // Wall boundary
-        }
+          face->set_boundary_id(3); // Wall boundary
       }
     }
 
 
     if (distort_mesh)
-      GridTools::distort_random(0.1, triangulation, true);
+      GridTools::distort_random(0.1, triangulation, true); // true means that the vertices on the boundary are unaffected
 
 
     std::ofstream out("mesh.vtk");
@@ -910,6 +910,7 @@ namespace coanda
     jacobian_matrix.reinit(owned_partitioning, dsp, mpi_communicator);
     pressure_mass_matrix.reinit(owned_partitioning[1], dsp.block(1, 1), mpi_communicator);
 
+
     present_solution.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
     old_solution.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
     evaluation_points.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
@@ -934,6 +935,7 @@ namespace coanda
 
     system_rhs = 0.0;
 
+
     FEValues<dim> fe_values(fe, quad_formula, update_values | update_quadrature_points | update_JxW_values | update_gradients);
     
     const unsigned int dofs_per_cell = fe.dofs_per_cell;
@@ -941,6 +943,7 @@ namespace coanda
 
     const FEValuesExtractors::Vector velocities(0);
     const FEValuesExtractors::Scalar pressure(dim);
+
 
     FullMatrix<double> local_matrix(dofs_per_cell, dofs_per_cell);
     Vector<double> local_rhs(dofs_per_cell);
@@ -998,6 +1001,7 @@ namespace coanda
             phi_p[k] = fe_values[pressure].value(k, q);
           }
 
+
           for (unsigned int i = 0; i < dofs_per_cell; ++i)
           {
             if (assemble_jacobian)
@@ -1005,18 +1009,18 @@ namespace coanda
               for (unsigned int j = 0; j < dofs_per_cell; ++j)
               {
                 const double quantity1 =
-                      viscosity * scalar_product(grad_phi_u[i], grad_phi_u[j])   //  a(u, v) ---> mu*grad(u)*grad(v)  
+                      viscosity * scalar_product(grad_phi_u[i], grad_phi_u[j])   //  a(u, v) <--- mu*grad(u)*grad(v)  
                       + phi_u[i] * (present_velocity_gradients[q] * phi_u[j])    //  Linearization of the convective term (pt. 1) 
                       + phi_u[i] * (grad_phi_u[j] * present_velocity_values[q]); //  Linearization of the convective term (pt. 2) 
                 
 
                 double quantity2 =
-                      - div_phi_u[i] * phi_p[j];                                 //  b(v, p) = -p*div(v) 
+                      - div_phi_u[i] * phi_p[j];                                 //  b(v, p) <--- -p*div(v) 
                   
 
                 if (!steady_system)
                 {
-                  quantity2 += + phi_p[i] * div_phi_u[j];  
+                  quantity2 += + phi_p[i] * div_phi_u[j];                        // -b(u, q) <--- div(u)*q 
                   
                   const double mass_matrix_contribution =
                         (phi_u[i] * phi_u[j]) / time.get_delta_t();               //  From time stepping, 1/dt*M
@@ -1050,17 +1054,18 @@ namespace coanda
             // contributions from the right hand-side at times t^n and t^{n+1}
 
             const double quantity1 = 
-                  -viscosity * scalar_product(grad_phi_u[i], present_velocity_gradients[q]) // from A
+                  -viscosity * scalar_product(grad_phi_u[i], present_velocity_gradients[q])  // from A
                   - phi_u[i] * (present_velocity_gradients[q] * present_velocity_values[q]); //  from C
 
 
-            double quantity2 = // from B^T
+            double quantity2 =                                                               // from B^T
                   + div_phi_u[i] * present_pressure_values[q];
  
  
             if (!steady_system)
             {
               const double mass_matrix_contribution = (phi_u[i]*tmp[q]) / time.get_delta_t();
+              
               quantity2 -= phi_p[i] * present_velocity_divergence;
             
 
@@ -1082,6 +1087,7 @@ namespace coanda
             else
             {
               quantity2 += phi_p[i] * present_velocity_divergence;
+
               local_rhs(i) += (
                         quantity1
                         + quantity2
@@ -1094,8 +1100,10 @@ namespace coanda
 
         cell->get_dof_indices(local_dof_indices);
 
+
         const AffineConstraints<double> &constraints_used = first_iteration ? nonzero_constraints : zero_constraints;
        
+
         if (assemble_jacobian)
           constraints_used.distribute_local_to_global(local_matrix, local_rhs, local_dof_indices, jacobian_matrix, system_rhs);
         else
@@ -1116,6 +1124,7 @@ namespace coanda
         jacobian_matrix.compress(VectorOperation::add);
       } 
     }
+
     system_rhs.compress(VectorOperation::add);
   }
 
@@ -1156,6 +1165,7 @@ namespace coanda
   void NS<dim>::assemble_rhs(const bool first_iteration, const bool steady_system)
   {
     const bool assemble_jacobian{false};
+
     assemble(first_iteration, assemble_jacobian, steady_system);
   }
 
@@ -1172,10 +1182,13 @@ namespace coanda
     GrowingVectorMemory<PETScWrappers::MPI::BlockVector> vector_memory;
     SolverFGMRES<PETScWrappers::MPI::BlockVector> gmres(solver_control, vector_memory);
 
+
+    // choose the preconditioner
     if (!steady_system)
       gmres.solve(jacobian_matrix, newton_update, system_rhs, *preconditioner);
     else
       gmres.solve(jacobian_matrix, newton_update, system_rhs, *steady_preconditioner);
+
 
     pcout << "  FGMRES steps: " << solver_control.last_step() << std::endl;
     constraints_used.distribute(newton_update);
@@ -1197,7 +1210,7 @@ namespace coanda
     bool first_iteration{is_initial_step};
     unsigned int line_search_n{0};
     double last_res{1.0};
-    double current_res{1.0};
+    double current_res{1.0}; // to enter the loop
  
     while ((first_iteration || (current_res > tolerance)) && line_search_n < max_n_line_searches)
     {
@@ -1206,20 +1219,25 @@ namespace coanda
         setup_dofs();
         setup_system();
 
+
         evaluation_points = 0;
+
 
         assemble_system(first_iteration, steady_system);
         solve(first_iteration, steady_system);
-
         nonzero_constraints.distribute(newton_update);
+
 
         dst = newton_update;
         dst.update_ghost_values();
-     
+
+
         first_iteration = false;
         evaluation_points = dst;
 
+
         assemble_rhs(first_iteration, steady_system);
+
 
         current_res = system_rhs.l2_norm();
         pcout << "  The residual of initial guess is " << current_res << std::endl;
@@ -1228,8 +1246,8 @@ namespace coanda
 
       else
       {
-        // Choose the initial guess for Netwon's method: either the solution at the previous time step, or a linear combination 
-        // between it and an asymmetrical one
+        /* Choose the initial guess for Netwon's method: either the solution at the previous time step, or a linear combination 
+        between it and an asymmetrical one */
         double guess_u_norm{steady_solution.block(0).l2_norm()};
 
         if (use_continuation && guess_u_norm!=0 && !steady_system && line_search_n==0)  // reinit initial guess
@@ -1239,16 +1257,20 @@ namespace coanda
                                                               * Afterwards, it will be reinitialized and used as an actual initial guess */
           tmp_initial_guess.reinit(owned_partitioning, mpi_communicator);
 
+
           tmp_initial_guess -= old_solution;
           tmp_initial_guess += steady_solution; // initial guess - old solution
+
 
           double dist_from_guess{tmp_initial_guess.l2_norm()};
           double alpha = dist_from_guess/guess_u_norm; // so that it is always in [0, 1]
           pcout << "  The relative distance between the solution at the previous time step and the one to the steady problem is "
                 << alpha << std::endl;
 
+
           evaluation_points.reinit(owned_partitioning, mpi_communicator);
           evaluation_points = 0.0;
+
 
           tmp_initial_guess.reinit(owned_partitioning, mpi_communicator);
           tmp_initial_guess += old_solution; /* if alpha = 0, || initial_guess - old solution || = 0, so that initial_guess = old solution
@@ -1266,8 +1288,10 @@ namespace coanda
         // We do not update the Jacobian at each iteration to reduce the cost
         if (line_search_n % jacobian_update_step == 0 || (line_search_n < 2 && time.get_timestep()<15))
           assemble_system(first_iteration, steady_system);
+
         else
           assemble_rhs(first_iteration, steady_system);
+
 
         solve(first_iteration, steady_system);
  
@@ -1283,24 +1307,30 @@ namespace coanda
           tmp *= alpha;
           evaluation_points += tmp;
 
+
           nonzero_constraints.distribute(evaluation_points);
           assemble_rhs(first_iteration, steady_system); // we assemble taking into account the boundary conditions
 
           current_res = system_rhs.l2_norm();
           pcout << "    alpha: " << std::setw(10) << alpha << std::setw(0) << "  residual: " << current_res << std::endl;
 
+
           if (current_res < last_res)
             break;
         }
+
 
         dst = evaluation_points;
         dst.update_ghost_values();
                 
         pcout << "  number of line searches: " << line_search_n << "  residual: " << current_res << std::endl;
         last_res = current_res;
-        if (line_search_n == 0)
+
+
+        if (line_search_n == 0 && !steady_system)
           residuals_at_first_iteration.push_back(last_res);
         
+
         ++line_search_n;
       }
     }
@@ -1316,29 +1346,30 @@ namespace coanda
     TimerOutput::Scope timer_section(timer, "Output results");
     pcout << "Writing results..." << std::endl;
 
+
     std::vector<std::string> solution_names(dim, "velocity");
     solution_names.push_back("pressure");
 
+
+    // recall that the solution belongs to a mixed function space
     std::vector<DataComponentInterpretation::DataComponentInterpretation> data_component_interpretation(
                                                                               dim,
                                                                               DataComponentInterpretation::component_is_part_of_vector
                                                                               );
     data_component_interpretation.push_back(DataComponentInterpretation::component_is_scalar);
 
+
     DataOut<dim> data_out;
     data_out.attach_dof_handler(dof_handler);
+
 
     // vector to be output must be ghosted
     if (!output_steady_solution) 
       data_out.add_data_vector(present_solution, solution_names, DataOut<dim>::type_dof_data, data_component_interpretation);
 
-    else
-    {
-      PETScWrappers::MPI::BlockVector tmp;
-      tmp.reinit(owned_partitioning, relevant_partitioning, mpi_communicator);
-      tmp = steady_solution;
+    else    
       data_out.add_data_vector(steady_solution, solution_names, DataOut<dim>::type_dof_data, data_component_interpretation); 
-    }
+
 
     // Partition
     Vector<float> subdomain(triangulation.n_active_cells());
@@ -1349,6 +1380,7 @@ namespace coanda
     data_out.add_data_vector(subdomain, "subdomain");
     data_out.build_patches(fe_degree + 1);
 
+
     std::string basename;
 
     if (!output_steady_solution)
@@ -1356,10 +1388,12 @@ namespace coanda
     else 
       basename = "steady_solution";
 
+
     std::string filename = basename + Utilities::int_to_string(triangulation.locally_owned_subdomain(), 4) + ".vtu";
 
     std::ofstream output(filename);
     data_out.write_vtu(output);
+
 
     static std::vector<std::pair<double, std::string>> times_and_names;
     
@@ -1454,8 +1488,7 @@ namespace coanda
     setup_system();
 
 
-    // Transfer solution
-    // Need a non-ghosted vector for interpolation
+    // Transfer solution: we need a non-ghosted vector for interpolation
     PETScWrappers::MPI::BlockVector tmp(newton_update);
     tmp = 0;
 
@@ -1467,8 +1500,6 @@ namespace coanda
     old_solution.update_ghost_values();
 
     
-
-
     if (use_continuation) 
     {
       tmp = 0;
@@ -1493,6 +1524,7 @@ namespace coanda
     const unsigned int n_max_iter{50};
     const double tol{1e-8};
  
+
     for (double mu = viscosity_begin_continuation; mu >= target_viscosity; mu -= continuation_step_size)
     {
       viscosity = mu;
@@ -1505,6 +1537,7 @@ namespace coanda
       if (std::abs(mu - target_viscosity) < 1e-8)
         break;
     }
+
 
     viscosity = target_viscosity;
 
@@ -1536,14 +1569,9 @@ namespace coanda
     nonzero_constraints.distribute(tmp);
 
     old_solution = tmp;
-    
+  
 
-    // Time loop.
-
-    bool should_stop{false};
-    bool first_iteration{true};
-
-    const double fraction_to_refine{0.6};
+    // continuation algorithm
 
     if (use_continuation)
     {
@@ -1552,23 +1580,36 @@ namespace coanda
       output_results(0, output_steady_solution); // save the steady solution
     }
 
+
+    // Time loop.
+
+    bool should_stop{false};
+    bool first_iteration{true};
+
+    const double fraction_to_refine{0.6};
+
+
     while ((time.end() - time.current() > 1e-12) && (!should_stop)) 
     {
       if (time.get_timestep() == 0 && !use_continuation)
-        output_results(0, false);
+        output_results(0, false); // to save the initial mesh
 
       time.increment();
       std::cout.precision(6);
       std::cout.width(12);
-      pcout << "\n" << std::string(20, '-') << " Time step = " << time.get_timestep() << ", at t = " << std::scientific << time.current() << " " << std::string(20, '-') << "\n" << std::endl;
+      pcout << "\n" << std::string(20, '-') << " Time step = " << time.get_timestep() << ", at t = "
+            << std::scientific << time.current() << " " << std::string(20, '-') << "\n" << std::endl;
+
       
+      // perform Newton iteration
       const bool steady_system{false};
       const double nonlinear_tolerance(1e-9);
       const unsigned max_iterations{50};
 
       newton_iteration(present_solution, nonlinear_tolerance, max_iterations, first_iteration, steady_system);
 
-      double norm_increment;
+      // compute the relative distance bewteen iterations
+      double norm_increment; 
 
       {
         PETScWrappers::MPI::BlockVector solution_increment_in_time;
@@ -1581,16 +1622,20 @@ namespace coanda
         norm_increment = u_increment_norm/old_u_norm; // this could be inf, but no error is thrown
       }
 
-      if (norm_increment < stopping_criterion)
+
+      if (norm_increment < stopping_criterion) // check if we should stop according to the relative distance criterion
         should_stop = true;
       pcout << " The relative distance between the two iterations is " << norm_increment << std::endl;
 
-      relative_distances.push_back(norm_increment);
 
-      old_solution.reinit(owned_partitioning, mpi_communicator);
+      relative_distances.push_back(norm_increment); // save the value
+
+
+      old_solution.reinit(owned_partitioning, mpi_communicator); // update the previous solution
       old_solution = present_solution;
 
       first_iteration = false;
+
 
       // Output
       if (time.time_to_output())
@@ -1599,11 +1644,14 @@ namespace coanda
         output_results(time.get_timestep(), output_steady_solution);
       }
 
+
       // Refinement
       if (time.time_to_refine() && adaptive_refinement)
         refine_mesh(0, 2, fraction_to_refine);
     }
 
+
+    // save the two vectors to output
     const std::string filename1{"residual_first_iteration.csv"};
     const std::string filename2{"relative_distances.csv"};
 
@@ -1630,7 +1678,7 @@ int main(int argc, char *argv[])
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
 
     
-    const bool distort_mesh{true};
+    const bool distort_mesh{false};
     const bool adaptive_refinement{true};
 
 
@@ -1644,13 +1692,13 @@ int main(int argc, char *argv[])
     const double stopping_criterion{1e-7};
     
 
-    const double time_end{70};
+    const double time_end{50};
     const double delta_t{1e-2};
     const double output_interval{1e-1};
     const double refinement_interval{1e-0};
 
 
-    const bool use_continuation{true};
+    const bool use_continuation{false};
     const bool adaptive_refinement_after_continuation{false};
     const double gamma{5};
     const double viscosity_begin_continuation{1.2};

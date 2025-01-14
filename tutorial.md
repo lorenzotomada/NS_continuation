@@ -591,7 +591,7 @@ F & B^T \\
 -B & S 
 \end{bmatrix}.
 ```
-In our case, we have that $S=0$; however, this notation takes into account more general scenarios, in which e.g. constraints are imposed in the block $(1,1)$ (counting starts from $0$, as in C++).
+In our case, we have that $S=0$; however, this notation takes into account more general scenarios, in which e.g. constraints are imposed in the block $(1,1)$ (counting starts from $0$, as in C++) or some form of stabilization is used.
 
 The SIMPLE preconditioner is defined as:
 ```math

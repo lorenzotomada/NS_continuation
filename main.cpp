@@ -1216,10 +1216,6 @@ namespace coanda
     {
       if (first_iteration)
       {
-        setup_dofs();
-        setup_system();
-
-
         evaluation_points = 0;
 
 

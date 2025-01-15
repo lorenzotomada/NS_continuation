@@ -1794,9 +1794,6 @@ The following updates satisfy homogeneous DBCs, so that the operation `dst+=newt
     {
       if (first_iteration)
       {
-        setup_dofs();
-        setup_system();
-
         evaluation_points = 0;
 
 

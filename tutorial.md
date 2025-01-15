@@ -173,7 +173,7 @@ Following the standard FE theory, we can then express $\boldsymbol{u}_h$ and $p_
 ```
 where $N_h = \text{dim}(V_h)$ and $M_h = \text{dim}(Q_h)$.
 
-Our problem can then be rewritten in the following way:
+Our problem can then be rewritten in the following way (also multiplying the second equation by $-1$):
 ```math
 \begin{cases}{}
     \displaystyle M\frac{\partial\boldsymbol{u}(t)}{\partial t} + A\boldsymbol{u}(t) + C\left(\boldsymbol{u}(t)\right)\boldsymbol{u}(t) +  B^T\boldsymbol{p}(t) = \boldsymbol{f}(t) \\ 
@@ -182,7 +182,7 @@ Our problem can then be rewritten in the following way:
 ```
 with $\boldsymbol{u}(0) = \boldsymbol{u}_0$.
 
-In the previous equation, $\boldsymbol{u}(t) = (u_j(t))_j\in\R^{N_h}$, $M\in\mathbb{R}^{N_h\times N_h}$ is the mass matrix, whose element in position $(l, r)$ is given by
+In the previous equation, $\boldsymbol{u}(t) = (u_j(t))_j\in\mathbb{R}^{N_h}$, $M\in\mathbb{R}^{N_h\times N_h}$ is the mass matrix, whose element in position $(l, r)$ is given by
 ```math
     m_{lr} = \int_\Omega \boldsymbol{\varphi}_l\cdot\boldsymbol{\varphi}_rd\Omega, \qquad a_{ij} = a(\boldsymbol{\varphi}_i, \boldsymbol{\varphi}_j) \qquad \text{and} \qquad b_{km} = b(\boldsymbol{\varphi}_m, \phi_k)
 ```
@@ -204,14 +204,12 @@ This leads to a system of of algebraic equations, after writing
 ```math
 \begin{cases}{}
     M\frac{\boldsymbol{u}^{n+1}-\boldsymbol{u}^n}{\Delta t} + A\boldsymbol{u}_{\theta}^{n+1}+ C_\theta(\boldsymbol{u}^{n+1})\boldsymbol{u}^{n+1} + B^T\boldsymbol{p}_\theta^{n+1} = \boldsymbol{f}_\theta^{n+1}\\
-    B\boldsymbol{u}^{n+1} = \boldsymbol{0}.
+    -B\boldsymbol{u}^{n+1} = \boldsymbol{0}.
 \end{cases}
 ```
 
 We remark that a slight modification of this approach can be used, with a tweak being involved at each time step.
 It consists in replacing $B^T\boldsymbol{p}_\theta^{n+1}$ with $B^T\boldsymbol{p}^{n+1}$, i.e. we [advance implicitly the term involving pressure](https://www.sciencedirect.com/science/article/abs/pii/S004578250500455X), as done frequently in literature.
-
-We also multiply the second equation by $-1$.
 
 ---
 
@@ -617,7 +615,7 @@ This operation, in turn, requires computing the inverses of $F$ and $\widetilde{
 To do so, $F$ and $\widetilde{\Sigma}$ are approximated, and we refer to the method obtained in this way as _aSIMPLE_ (approximate SIMPLE).
 
 Since $P_{\text{SIMPLE}}=LU$, we can rewrite $P_{\text{SIMPLE}}^{-1}x$ as $U^{-1}L^{-1}x$.
-Hence, to compute $P_{\text{SIMPLE}}^{-1}x$, we can first solve $Ly = \text{src}$ trough the `vmult_L` method, and then $Ux = y$, using `vmult_U`.
+Hence, to compute $z=P_{\text{SIMPLE}}^{-1}x$, we can first solve $Ly = x$ trough the `vmult_L` method, and then $Uz = y$, using `vmult_U`.
 
 
 It is important to underline also that the `SIMPLE` class can be used with MPI.
@@ -1561,7 +1559,7 @@ Moreover, we have to multiply `quantity1` by $\theta$. Recall that, by choice, t
                   quantity2 += + phi_p[i] * div_phi_u[j];                        // -b(u, q) <--- div(u)*q 
                   
                   const double mass_matrix_contribution =
-                        (phi_u[i] * phi_u[j]) / time.get_delta_t();               //  From time stepping, 1/dt*M
+                        (phi_u[i] * phi_u[j]) / time.get_delta_t();              //  From time stepping, 1/dt*M
 
 
                   local_matrix(i, j) += (
@@ -1575,7 +1573,7 @@ Otherwise, assembling the steady system we add exactly the same quantities speci
 ```cpp
                 else
                 {
-                  quantity2 += - phi_p[i] * div_phi_u[j];                    //  b(u, q) = -q*div(u)  
+                  quantity2 += - phi_p[i] * div_phi_u[j];                        //  b(u, q) = -q*div(u)  
                
                   local_matrix(i, j) += (
                         quantity1
@@ -1688,7 +1686,7 @@ The reasons for assembling just the RHS instead of the jacobian matrix as well a
 
 Both methods accept two booleans as input, the first one stating whether we are currently at the first iteration (to decide which `AffineConstraints<double>` object to use), and the second one to determine whether to build the matrix and RHS corresponding to the steady case or to the unsteady one.
 ```cpp
-// assemble_system
+  // assemble_system
 
   template <int dim>
   void NS<dim>::assemble_system(const bool first_iteration, const bool steady_system)
@@ -1720,7 +1718,7 @@ Clearly, the correct one needs to be selected, depending on the `steady_system` 
  
 
 
-// assemble_rhs
+  // assemble_rhs
 
   template <int dim>
   void NS<dim>::assemble_rhs(const bool first_iteration, const bool steady_system)
@@ -2429,6 +2427,11 @@ The following images display the behaviour of the velocity field for different v
 It is easy to observe that the final configuration is fully symmetrical.
 Mesh refinement was used, but also the mesh remained symmetrical throughout the whole evolution.
 
+<figure>
+  <img src="images/symm_mesh/refined_mesh.png" alt="Alt text" width="500">
+  <figcaption>Detail of the mesh at t=1.1.</figcaption>
+</figure>
+
 ---
 
 Now we plot two quantities of interest, namely the relative distance bewteen two successive iterations $\displaystyle\frac{\|\boldsymbol{u}^{n+1}-\boldsymbol{u}^n\|_2}{\|\boldsymbol{u}^n\|_2}$ and the residual corresponding to the initial guess for Newton's method at each time step.
@@ -2516,6 +2519,11 @@ Examining the system's time evolution, we can identify two distinct phases of dy
 - afterwards, the solution starts to bend towards one of the walls, and slowly beginning to display the aforementioned wall-hugging behaviour.
 
 After the asymmetrical, stable configuration is reached, the system finally reaches a steady state.
+
+<figure>
+  <img src="images/asymm_mesh_1/refined_mesh.png" alt="Alt text" width="500">
+  <figcaption>Detail of the mesh at t=70.</figcaption>
+</figure>
 
 ---
 Also here, we plot the residual and the relative distance $\displaystyle\frac{\|\boldsymbol{u}^{n+1}-\boldsymbol{u}^n\|_2}{\|\boldsymbol{u}^n\|_2}$.

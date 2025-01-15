@@ -1442,7 +1442,16 @@ It takes the following arguments:
 
 An important remark which needs to be done is the following: since the mass matrix $M$, the stiffness matrix $A$ and the matrix $B$ depend exclusively on the mesh, it could make sense to assemble them just once after each mesh refinement.
 
-However, in this particular case, this approach is not necessarily the best one. The reason for this is explained in more detail in the body of the `assemble` method, in order to show the specific lines of codes for which criticalities might arise.
+However, in this particular case, this approach is not necessarily the best one.
+The reason for this is the following: each time the jacobian is assembled, to assemble the linearization of $C$ we still have to iterate over all the cells, compute *all* the values and the gradients of the shape functions (except for those regarding $p$), and evaluate the current solution (as well as the old one for the RHS computation).
+Therefore, while assembling the matrices depending on the mesh requires some additional sums and multiplications, the actual speed-up might not compensate for the increased memory requirement needed to save the values of the matrices depending on the mesh;
+
+Even more importantly, the procedure does not work in practice for this specific test case.
+This is related to how boundary conditions are imposed and it is further explained in the body of the `assemble` method (to better understand the lines of code in which criticalities might arise).
+
+For completeness, I wrote and update the file `separate_mesh_matrices.cpp` implementing the aforementioned separation procedure to compute $M,\,A$ and $B$ only after the method `setup_dofs` has been called (e.g. after refinement).
+However, I just did it in order to show that an attempt was made in that direction: as just explained, that is not the procedure that is used in the following, nor the one used for numerical tests.
+
 ```cpp
   template <int dim>
   void NS<dim>::assemble(const bool first_iteration, const bool assemble_jacobian, const bool steady_system)
@@ -1521,9 +1530,6 @@ This allows to tweak the value of `evaluation_points` if we want to provide a cu
           {
 ```
 Now we compute the values and the gradients of the shape functions.
-
-These lines are the reason for which I have decided not to assemble $M,\,A$ and $B$ separately: while they only depend on the mesh, each time we assemble the Jacobian matrix we still have to compute *all* the following values (except for the pressure ones), to iterate over each cell and to perform operations with them.
-That means that, while this approach would indeed be more efficient from a computational point of view, it is also more memory demanding, and the superior memory consumption might not necessarily be compensated by the actual speed-up in computations.
 ```cpp
             div_phi_u[k] = fe_values[velocities].divergence(k, q);
             grad_phi_u[k] = fe_values[velocities].gradient(k, q);
@@ -1657,7 +1663,20 @@ We choose the correct constraints object and use its `distribute_local_to_global
       }
     }
 ```
-Now we compress the matrices and the RHS. In the case of the steady system, we also assemble the pressure mass matrix as done in step 57.
+Remark that these lines are the reason for which I ultimately chose to assemble the matrices depending on the mesh separately from the $C$ component.
+Indeed, in that case, the jacobian matrix $\mathcal{J}$ would be obtained by summing different components.
+On each component, however, empty constraints should be imposed, since the DBCs should hold for the solution of the linear system, and not at the time we use `constraints_used.distribute_local_to_global` on a single mesh matrix.
+
+Yet, due to the fact that the initial condition for the method is $0$ a.e., the function $\mathcal{\boldsymbol{F}}$ is equal to $0$ on $\boldsymbol{u}_0$, apart from a couple of entries.
+If it were exactly equal to $0$, being the matrix $\mathcal{J}$ nonsingular, the update would be nonzero, and Newton's method would be of no use.
+The fact that few entries differ from zero makes it possible to compute an update; however, the residual stagnates at high values, and the solution which is obtained is not phyisical.
+Contrarily, enforcing constraints ensures that more entries of the RHS are nonzero and allows to get close to the real solution very fast.
+
+It would be natural to try to impose the constraints after assembling the system, but the `condense` method of an `AffineConstraints` object does not accept an `PETScWrappers::MPI::BlockSparseMatrix` object as input.
+
+---
+
+Going back to the code, now we compress the matrices and the RHS. In the case of the steady system, we also assemble the pressure mass matrix as done in step 57.
 ```cpp
     if (assemble_jacobian)
     {

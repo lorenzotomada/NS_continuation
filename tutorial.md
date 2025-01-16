@@ -285,7 +285,7 @@ C(\boldsymbol{u})_{ij} = \int_\Omega (\boldsymbol{\varphi}_j\cdot\nabla\boldsymb
 In the previous equation, with a slight abuse of notation, we denoted by $\boldsymbol{u}$ the vector given by $\sum_{j = 1}^{N_h} u_j\boldsymbol{\varphi}_j$.
 
 
-At each time step $n+$, the equation to be solved at each iteration of the method is then the usual one.
+At each time step $n+1$, the equation to be solved at each iteration of the method is then the usual one.
 Given an initial guess $(\boldsymbol{u}_0, p_0)$, at each step $k+1$ solve for the update $(\delta\boldsymbol{u}_{k+1}, \delta p_{k+1}) = (\boldsymbol{u}_{k+1}-\boldsymbol{u}_{k}, p_{k+1}-p_{k})$ the equation:
 ```math
 \mathcal{J}(\boldsymbol{u}_k, p_k)[(\delta\boldsymbol{u}^{k+1}, \delta p^{k+1})] = -\mathcal{\boldsymbol{F}}^{n+1}(\boldsymbol{\boldsymbol{u}_k, p_k})
@@ -741,7 +741,7 @@ The following class is a declaration of the SIMPLE preconditioner. All the matri
 Here we also save a `PETScWrappers::SparseDirectMUMPS` object: while the choice to use a direct solver might seem counterintuitive when using parallelization and/or with systems with a large number of degrees of freedom, there a couple of reasons for this:
 - Iterative solvers, at least in this case, tend to perform extremely poorly on $F$, making the use of preconditioners too expensive from a computational point of view; 
 - Since the Jacobian matrix is not updated at each step (more on that in the following), we need to solve various linear systems with the same matrix. Therefore it might make sense to compute its factorization once and then use it to solve multiple linear systems;
-- The number of DOFs considered in this script (at least in the 2D case) is still moderate, i.e. around 10.000/20.000 DOFs, making the advantage of iterative methods less evident.
+- The number of DoFs considered in this script (at least in the 2D case) is still moderate, i.e. around 10.000/20.000 DoFs, making the advantage of iterative methods less evident.
 ```cpp
     SolverControl tmp_solver_control; // used just to initialize F_solver
     mutable PETScWrappers::SparseDirectMUMPS F_solver;
@@ -821,7 +821,7 @@ The following functions are needed to initialize and assemble the Schur compleme
 #### The `vmult` operation
 The following functions are the ones needed to implement `vmult`, i.e. multiplication left and right multiplication.
 ```cpp
-  // vmult_l
+  // vmult_L
 
   void SIMPLE::vmult_L(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const
   {
@@ -860,7 +860,7 @@ The following functions are the ones needed to implement `vmult`, i.e. multiplic
 
 
 
-  // vmult_u
+  // vmult_U
 
   void SIMPLE::vmult_U(PETScWrappers::MPI::BlockVector &dst, const PETScWrappers::MPI::BlockVector &src) const
   {
@@ -994,12 +994,12 @@ A detailed description of the class is provided in the rest of this tutorial.
 
 ## An overview of the data to be passed to the constructor
 The constructor takes the following inputs:
-- `distort_mesh` is a flag which specifies whether mesh should be distorder (see [step 49](https://www.dealii.org/current/doxygen/deal.II/step_49.html)), which in many situations can be crucial in order to observe the bifurcating behaviour of the solution;
-- `adaptive_refinement` is a flag which specifies whether the mesh should be refined adaptively or not during time-stepping;
+- `distort_mesh` is a flag which specifies whether mesh should be distorded (see [step 49](https://www.dealii.org/current/doxygen/deal.II/step_49.html)), which in many situations can be crucial in order to observe the bifurcating behaviour of the solution;
+- `adaptive_refinement` is a flag that specifies whether the mesh should be refined adaptively or not during time-stepping;
 - `n_glob_ref` is the number of global refinement performed on the initial mesh;
 - `fe_degree` is the degree used for the pressure space. Since we are using Taylor-Hood pairs, the degree used for the velocity one is going to be `fe_degree` $+1$;
-- `jacobian_update_step` is the step used for updating the Jacobian in the (quasi)-Newon method;
-- `theta` is the parameter $\theta$ of the $\theta$-method, and it is here chosen as $\frac{1}{2}$, due to the fact that the trapezoidal rule is the only $\theta$-method$ with order to (and it is also A-stable);
+- `jacobian_update_step` is the step used the Jacobian update in the (quasi)-Newon method;
+- `theta` is the parameter $\theta$ of the $\theta$-method, and it is here chosen as $\frac{1}{2}$, due to the fact that the trapezoidal rule is the only $\theta$-method$ with order $2$ (and it is also A-stable);
 - `viscosity` is the value of $\mu$ for which we want to perform a simulation;
 - `stopping_criterion` is the threshold $\tau$ used to check if $\displaystyle\frac{\|\boldsymbol{u}^{n+1}-\boldsymbol{u}^{n}\|_2}{\|\boldsymbol{u}^{n}\|_2}<\tau$ and, in that case, stop the simulation;
 - `time_end`, `delta_t`, `output_interval`, and `refinement_interval` are the inputs given to the constructor of the `Time` class;
@@ -1086,7 +1086,7 @@ Default values are provided for all the parameters which are not needed if conti
 
     void compute_initial_guess();
 ```
-In addition to the inputs passed to the constructor, the class also saves the objects needed for a distributed FE solver (an MPI communicator, the triangulation, the DOF handler, a finite element system object, the sparsity pattern of the Jacobian matrix, shared pointer pointing to the preconditioners, and so on).
+In addition to the inputs passed to the constructor, the class also saves the objects needed for a distributed FE solver (an MPI communicator, the triangulation, the DoF handler, a finite element system object, the sparsity pattern of the Jacobian matrix, shared pointer pointing to the preconditioners, and so on).
 
 Additionally, the pressure mass matrix is saved, as it is used by the preconditioner in the steady case.
 Remark that the matrix will be empty if continuation is not used.
@@ -1097,7 +1097,7 @@ Various vectors are stored, namely:
 - `present_solution`, which holds the current solution;
 - `old_solution`, containing the solution at the previous time step;
 - `steady_solution`, containing the solution to the steady problem (not computed if continuation is not used);
-- `newton_update`, containint the update to be added to the `present_solution` at each iteration of Newton's method;
+- `newton_update`, containing the update to be added to the `present_solution` at each iteration of Newton's method;
 - `evaluation_points`, used for technical reasons explained below;
 - `system_rhs`, pretty self-explanatory.
 
@@ -1167,7 +1167,7 @@ After this phase, all the successive updates $\delta u^k$ and $\delta p^k$ are e
 ```
 We also save two vectors: `relative_distances` keeps track of the relative distance between two successive iterations, while `residuals_at_first_iteration` corresponds to the residual at the first iteration of Newton's method at each time step.
 
-The reason for saving the latter quantity is that we would like to quantify, in some sense, _how far_ we are from being a solution to the problem: we expect that once the steady state is (almost) reached, even passing the solution at the previous time step should require a very small update.
+The reason for saving the latter quantity is that we would like to quantify, in some sense, _how far_ we are from being a solution to the problem: we expect that once the steady state is (almost) reached, passing the solution at the previous time step should require a very small update.
 ```cpp
     std::vector<double> relative_distances;
     std::vector<double> residuals_at_first_iteration;
@@ -1227,7 +1227,7 @@ Its only actions are to instantiate most of the attributes of the class, and to 
 ```
 ## The `make_grid` method
 This method creates a triangulation covering the domain considered in this project.
-An interesting remark is that `GridGenerator::subdivided_hyper_rectangle` needed to be used instead of `GridGenerator::hyper_rectangle`, as the latter yielded cells which were too stretched (here, instead, the aspect ratio of cells is closer to 1).
+An interesting remark is that `GridGenerator::subdivided_hyper_rectangle` needed to be used instead of `GridGenerator::hyper_rectangle`, as the latter yielded cells which were too stretched (here, instead, the aspect ratio of cells is smaller).
 
 This method is mostly based on the code written by [Gonnella for her most recent paper](https://github.com/ICGonnella/SSFEM-Coanda-Effect/blob/main/source/coanda.cpp), though with some tweaks and the addition of the 3D computational mesh.
 ```cpp
@@ -1268,9 +1268,10 @@ Afterwards, we remove the cells which cover areas (or volumes) not belonging to 
       {
         bool before_10_x_coord{cell->vertex(v)[0]<10}; // check if we are at the inlet
 
-        double v1{cell->vertex(v)[1]}; // check the y coordinate of the vertex 
+        double v1{cell->vertex(v)[1]}; // check the y coordinate of the vertex
 
         bool first_check{(v1 > 5.0 && v1 < 7.5) || (v1 < 2.5)};
+
 
         if constexpr (dim == 2) // no need to check anything for the z component as we are in 2D
         { 
@@ -1331,14 +1332,14 @@ This is the output of the method when instantiating a `NS` object in dimension $
 
 <figure>
   <img src="images/3d_mesh.png" alt="Alt text" width="500">
-  <figcaption>A very coarse mesh in 3D.</figcaption>
+  <figcaption>A coarse mesh in 3D.</figcaption>
 </figure>
 
 ## `setup_dofs` and `setup_system`
-These two functions have the goal of setting up the dofs and the system (i.e. by creating a sparsity pattern object).
+These two functions have the goal of setting up the DoFs and the system (e.g. by creating a sparsity pattern object).
 While they are mostly based on step 57, some modifications based on the [unsteady Navier-Stokes script](https://www.dealii.org/current/doxygen/deal.II/code_gallery_time_dependent_navier_stokes.html) in the `deal.II` code gallery are introduced in order to ensure that the code can run in parallel.
 
-As in step 57, we reorder DOFs in such a way that the ones related to velocity precede the ones related to pressure.
+As in step 57, we reorder DoFs in such a way that the ones related to velocity precede the ones related to pressure.
 ```cpp
   template <int dim>
   void NS<dim>::setup_dofs()
@@ -1469,8 +1470,8 @@ It takes the following arguments:
 
 An important remark which needs to be done is the following: since the mass matrix $M$, the stiffness matrix $A$ and the matrix $B$ depend exclusively on the mesh, it could make sense to assemble them just once after each mesh refinement.
 
-However, in this particular case, this approach is not necessarily the best one.
-The reason for this is the following: each time the jacobian is assembled, to assemble the linearization of $C$ we still have to iterate over all the cells, compute *all* the values and the gradients of the shape functions (except for those regarding $p$), and evaluate the current solution (as well as the old one for the RHS computation).
+However, in this particular case, this approach is not the best one.
+The reason for this is the following: each time the jacobian is assembled, to assemble the linearization of $C$ we still have to iterate over all the cells, compute *all* the values and the gradients of the shape functions (except for those regarding $p$), and evaluate the current solution, as well as the old one for the RHS computation.
 Therefore, while assembling the matrices depending on the mesh requires some additional sums and multiplications, the actual speed-up might not compensate for the increased memory requirement needed to save the values of the matrices depending on the mesh;
 
 Even more importantly, the procedure does not work in practice for this specific test case.
@@ -1625,7 +1626,7 @@ We begin by computing the divergence of `evaluation_points`:
 ```cpp
             double present_velocity_divergence = trace(present_velocity_gradients[q]);
 ```
-and then we compute `quantity1` and `quantity2` as before:
+and then we compute `quantity1` and `quantity2` similarly to what was done before:
 ```cpp
             const double quantity1 = 
                   -viscosity * scalar_product(grad_phi_u[i], present_velocity_gradients[q])  // from A
@@ -1635,7 +1636,7 @@ and then we compute `quantity1` and `quantity2` as before:
             double quantity2 =                                                               // from B^T
                   + div_phi_u[i] * present_pressure_values[q];
 ```
-If we are solving the unsteady system, we also need the mass matrix contribution
+If we are solving the unsteady system, we also need the velocity mass matrix contribution
 ```cpp
             if (!steady_system)
             {
@@ -1650,7 +1651,7 @@ If we are solving the unsteady system, we also need the mass matrix contribution
                     + quantity2
                     ) * fe_values.JxW(q);
 ```
-as well as the one form the solution at the previous time step:
+as well as the one from the solution at the previous time step:
 ```cpp
               local_rhs(i) += ( (1-theta)*
                         (
@@ -1691,6 +1692,7 @@ We choose the correct constraints object and use its `distribute_local_to_global
     }
 ```
 Remark that these lines are the reason for which I ultimately chose to assemble the matrices depending on the mesh separately from the $C$ component.
+
 Indeed, in that case, the jacobian matrix $\mathcal{J}$ would be obtained by summing different components.
 On each component, however, empty constraints should be imposed, since the DBCs should hold for the solution of the linear system, and not at the time we use `constraints_used.distribute_local_to_global` on a single mesh matrix.
 
@@ -1784,7 +1786,7 @@ Its inputs, as for the previous two cases, determine the boundary conditions use
   {
     const AffineConstraints<double> &constraints_used = first_iteration ? nonzero_constraints : zero_constraints;
 
-    SolverControl solver_control(100000, 1e-4 * system_rhs.l2_norm(), true);
+    SolverControl solver_control(10000, 1e-4 * system_rhs.l2_norm(), true);
 ```
 Remark that the tolerance for the solver does not impose a very restrictive condition.
 Indeed, since we are computing a Newton update and not the final solution, it is fine to have an update which is not perfectly computed, as long as we are okay with performing a few more line searches.
@@ -1809,7 +1811,7 @@ Indeed, since we are computing a Newton update and not the final solution, it is
 This method is possibly the most important one of the whole class when it comes to the continuation algorithm previously introduced.
 
 Its input are:
-- `dst`, the vector in which the solution is going to be saved (and which serve as initial condition in the steady case and, if continuation is not used, in the unsteady one);
+- `dst`, the vector in which the solution is going to be saved (and which serves as initial condition in the steady case and, if continuation is not used, in the unsteady one);
 - `tolerance`, to serve as tolerance on the residual to decide whether or not stop;
 - `max_n_line_searches`, the maximum number of iterations of Newton's method which is allowed;
 - the usual `is_initial_step` and `steady_system`.
@@ -1830,9 +1832,9 @@ Its input are:
 ```
 As usual, the check on `first_iteration` is needed to impose the correct set of DBCs.
 
-Moreover, we assume that at the first step the initial guess is the zero vector, so we assign `dst=newton_update` and we apply nonzero DBCs.
+Moreover, we assume that at the first step the initial guess is the zero vector, so we assign `dst = newton_update` and we apply nonzero DBCs.
 
-The following updates satisfy homogeneous DBCs, so that the operation `dst+=newton_update` returns a vector which satisfies the correct set of DBCs.
+The following updates satisfy homogeneous DBCs, so that the operation `dst += newton_update` returns a vector which satisfies the correct set of DBCs.
 ```cpp
     while ((first_iteration || (current_res > tolerance)) && line_search_n < max_n_line_searches)
     {
@@ -1861,7 +1863,7 @@ The following updates satisfy homogeneous DBCs, so that the operation `dst+=newt
         last_res = current_res;
       }
 ```
-After the first iteration, we might want to provide the solver with a custom initial guess.
+After the first iteration in time, we might want to provide the solver with a custom initial guess.
 This is done in line with what was explained in the theoretical introduction, i.e. considering a linear combination of the steady solution with the one at the previous time step.
  ```cpp
       else
@@ -1923,7 +1925,7 @@ If the current time is small (and, as such, the relative distance between two su
 
         solve(first_iteration, steady_system);
 ```
-As in step 57, we implement a simple line search strategy, which computes `present_solution` + $\alpha\cdot$ `newton_update` and checks whether the residual has decreased.
+As in step 57, we implement a simple line search strategy, which computes `present_solution + alpha * newton_update` and checks whether the residual has decreased.
 
 If it is not the case, $\alpha$ is divided by two and the procedure is repeated.
 ```cpp
@@ -2194,7 +2196,7 @@ The logic behind it is the one described in the theoretical introduction, so no 
 We might want to refine the mesh after we have computed the steady solution: hopefully, this would allow to keep information about the asymmetry and lead the unsteady solution towards the asymmetrical configuration.
 
 To this aim, it is sufficient to pass the flag `adaptive_refinement_after_continuation` with value `true`, so that the mesh is refined at the end of the procedure.
-After refining, we solve the system and refine once again, to make sure that the mesh is "biased" towards the asymmetrical solution, and then we refine once more.
+After refining, we solve the system and refine once again, to make sure that the mesh is "biased" towards the asymmetrical solution.
 ```cpp
     if (adaptive_refinement_after_continuation)
     {
@@ -2207,7 +2209,7 @@ After refining, we solve the system and refine once again, to make sure that the
 ```
 ## `run`
 Now, we define the `run` method.
-It sets up the DOFs and the system, it imposes boundary conditions on the initial condition, uses the continuation algorithm (if asked), and then performs time-stepping.
+It sets up the DoFs and the system, it imposes boundary conditions on the initial condition, uses the continuation algorithm (if asked to do so), and then performs time-stepping.
 ```cpp
   template <int dim>
   void NS<dim>::run()
@@ -2428,9 +2430,12 @@ When a continuation algorithm was used, the stabilization parameter $\gamma$ was
 
 ## Symmetrical mesh, continuation algorithm
 ### Steady system
+
+---
+
 When considering a symmetrical mesh (that is, setting `distort_mesh` to `false`), even the use of the continuation algorithm presented in this work did not allow to observe the unsteady, stable solution to the problem, hence making it of no use to employ a continuation algorithm during time-stepping.
 
-The following images displays the observed behaviour of the $u$ component of the velocity in this case.
+The following images displays the computational mesh used in this case:
 
 <figure>
   <img src="images/symm_mesh/mesh.png" alt="Alt text" width="500">
@@ -2446,6 +2451,9 @@ The following image displays the steady solution to the problem which is found u
 
 
 ### Time-stepping
+
+---
+
 As we could expect, using an unperturbed mesh did not allow to observe the wall-hugging behaviour in the unsteady case.
 
 The following images display the behaviour of the velocity field for different values of $t$.
@@ -2515,7 +2523,10 @@ A detail of the distorted mesh is plotted below:
 
 
 ### The steady system
-In particular, directly solving the steady system for low values of mu, e.g. $\mu=0.6$ (coming after the bifurcation has occurred), did not allow to see the bifurcating behaviour of the system, meaning that the continuation algorithm was actually crucial in order to retrieve the behaviour associated to the non-uniqueness of the solution.
+
+---
+
+In particular, directly solving the steady system for low values of mu, e.g. $\mu=0.6$ (coming after the bifurcation has occurred), did not allow to see the bifurcating behaviour of the system, meaning that the continuation algorithm was actually crucial in the steady case in order to retrieve the behaviour associated to the non-uniqueness of the solution.
 
 <figure>
   <img src="images/asymm_mesh_1/steady_sol.png" alt="Alt text" width="500">
@@ -2525,9 +2536,12 @@ In particular, directly solving the steady system for low values of mu, e.g. $\m
 
 After the continuation algorithm's execution terminated, the mesh was refined.
 
-Mesh refinement was also used every $1$ second during the time-evolution of the system.
+Mesh refinement was also used every second during the time-evolution of the system.
 
 ### Time-stepping
+
+---
+
 The distorted mesh and the continuation algorithm allowed us to observe the how the evolution of the system evolved to a stable configuration.
 
 However, it is interesting to underline that the time-dependent system evolved until it reached a solution belonging to the other branch w.r.t. the one provided as initial guess to the nonlinear solver, hence suggesting that (unlike in the steady case) the mesh, and not the initial guess, is the main factor related to the fact that the solution moves away from the unstable, asymmetrical solution.
@@ -2602,15 +2616,23 @@ The two take-home messages are the following:
 - the threshold $\tau$ (that is, `stopping_criterion`) is crucial to observe the bifurcating behaviour: even for relatively low values, such as $10^{-4}$, it is possible to overlook the bifurcation, mistakenly assuming that the steady state has been already reached!
 
 
+## Distorted mesh, with no continuation algorithms and no mesh refinement
+Since the continuation algorithm in the unsteady case appears to be of no use to influence the branch towards which the solution will converge, it is natural to ask whether the bifurcating behaviour can be seen even without using continuation or mesh refinement.
+
+The answer is positive.
 
 
 ## Distorted mesh, with a continuation algorithm, but mesh refinement performed (twice) just after continuation
 For this test, mesh refinement is not performed in time; instead, it is performed after continuation.
 The reason for this is the following: if the continuation algorithm yields an asymmetrical solution, the mesh will be refined in order to "follow" the solution, hence becoming asymmetrical.
 
-We want to find out whether or not this trick can recover a time-dependent solution belonging to the same branch of the steady one (unlike the case previously observed using mesh refinement).
+Previous tests have shown that the continuation algorithm is not necessary (in the unsteady case!) to observe the bifurcating behaviour, and do not seem to influence the choice of the branch.
+We want to find out whether or not the simple trick performed here can recover a time-dependent solution belonging to the same branch of the steady one.
 
 ### Steady system
+
+---
+
 The situation in the steady case is exactly the one descibed above and it is not explained once again here.
 
 The mesh after refinement looks like this:
@@ -2621,9 +2643,12 @@ The mesh after refinement looks like this:
 It can be seen that it is not symmetrical.
 
 ### Time-stepping
+
+---
+
 After the mesh refinement has been performed, we integrate in time, now without refining.
 
-This time, we can see that the system evolves until it reaches the stable solution belonging to the *same* branch as the steady solution
+This time, we can see that the system evolves until it reaches the stable solution belonging to the *same* branch as the steady solution. Hurray!
 
 <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; text-align: center;">
   <div>
@@ -2672,6 +2697,7 @@ While the global behaviour is not altered w.r.t what was seen before, now the li
 </div>
 
 ---
+
 Here, the additional conclusion which we can draw is that not only the computational mesh affects our ability to find _other_ solutions when dealing with bifurcating phenomena, but we could even be able to tweak it in such a way that we get the solution we actually want!
 
 
@@ -2679,7 +2705,7 @@ Here, the additional conclusion which we can draw is that not only the computati
 This project allowed to investigate the interplay between mesh properties, mesh refinement and continuation algorithms in the unsteady case of a known benchmark in literature.
 
 The experiments are in complete accordance with what was observed in preliminary investigations using FEniCS.
-However, the depth at which they were carried out is much bigger: aspects which have been investigate here include the use of a continuation algorithm, mesh refinement (both during time-stepping and after continuation), different mesh properties (symmetry, distortion) and so on.
+However, the depth at which they were carried out is much bigger: aspects which have been investigated here include the use of a continuation algorithm, mesh refinement (both during time-stepping and after continuation), different mesh properties (symmetry, distortion) and so on.
 
 Summarizing, we can convey the following message: while it is known that symmetrical meshes might perform poorly in the case of bifurcating phenomena (as pointed out by [Quaini et al.](https://www.tandfonline.com/doi/abs/10.1080/10618562.2016.1144877)), it is also true that simple tweaks like distortion and refinement can be turn out to be useful in recovering the desired solution and providing a way to reconstruct the bifurcation diagram.
 

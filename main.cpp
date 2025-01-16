@@ -1674,8 +1674,8 @@ int main(int argc, char *argv[])
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
 
     
-    const bool distort_mesh{false};
-    const bool adaptive_refinement{true};
+    const bool distort_mesh{true};
+    const bool adaptive_refinement{false};
 
 
     const unsigned int n_glob_ref{1};

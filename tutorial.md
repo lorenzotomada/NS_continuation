@@ -1,6 +1,6 @@
 # Formal problem statement
 
-The goal of this script is to study a symmetry-breaking bifurcation phenomena caused by the so-called Coandă effect in a sudden-expansion channel.
+The goal of this script is to study a symmetry-breaking bifurcation phenomena caused by the so-called _Coandă effect_ in a sudden-expansion channel.
 
 An introduction to the problem, as well as the strategies used to solve it, are presented in the following.
 
@@ -8,11 +8,13 @@ An introduction to the problem, as well as the strategies used to solve it, are 
 Let us consider the strong form of the incompressible unsteady Navier-Stokes equations:
 ```math
 \begin{cases}
-    \frac{\partial\boldsymbol{u}}{\partial t} + (\boldsymbol{u}\cdot\nabla)\boldsymbol{u} - \mu\Delta\boldsymbol{u} + \nabla p = \boldsymbol{f}, \quad\forall(\boldsymbol{x}, t)\in\Omega\times\mathbb{R}^+, \\
+    \frac{\partial\boldsymbol{u}}{\partial t} - \mu\Delta\boldsymbol{u} + (\boldsymbol{u}\cdot\nabla)\boldsymbol{u} + \nabla p = \boldsymbol{f}, \quad\forall(\boldsymbol{x}, t)\in\Omega\times\mathbb{R}^+, \\
     \nabla\cdot \boldsymbol{u}= 0, \quad\forall(\boldsymbol{x}, t)\in\Omega\times\mathbb{R}^+
 \end{cases}
 ```
 where $\mu\in\mathbb{R}^+$ represents the kinematic viscosity of the fluid, $\boldsymbol{f}\in L^2(\mathbb{R}^+; [L^2(\Omega)]^d)$ is a given force per unit volume and $\Omega\subseteq\mathbb{R}^d$ in which $d = 2, 3$.
+
+---
 
 These equations need to be enhanced with initial conditions
 ```math
@@ -33,6 +35,7 @@ Here $\Gamma_D\subset\partial\Omega$ and $\Gamma_N\subset\partial\Omega$ are por
 Notice that the continuity equation $\nabla\cdot \boldsymbol{u}= 0$ can be taken with the minus sign, as will be done in the following (more on that later).
 
 ### The Navier-Stokes equations in a channel
+---
 A common problem in fluid dynamics is the study of the behavior of a fluid flow in a channel $\Omega$.
 Assume that the boundary of $\Omega$, which we call $\partial\Omega=\Gamma$, is partitioned into three different regions $\Gamma_{\text{inlet}}$, $\Gamma_\text{out}$ and $\Gamma_0$, each of them having non-negative measure and such that their interiors are pairwise disjoint. $\Gamma_\text{inlet}$ represents the subset of $\Gamma$ from which a fluid can flow inside the channel; $\Gamma_\text{out}$ represents the boundary from which the fluid can leave the channel, while $\Gamma_0$ represents the walls of $\Omega$, which are assumed to be rigid.
 
@@ -55,14 +58,17 @@ Moreover, we assume that the intial condition is $0$ everywhere, except for the 
   <figcaption>The planar sudden-expansion channel considered in this project. Red denotes the outflow boundary, green the inlet, and black the walls on which no-slip condition is imposed.</figcaption>
 </figure>
 
-In this project, we consider a sudden-expansion channel, since the evolution of a fluid flow in in such a seeting can be seen as a simplified model of the _mitral valve regurgitation_, a heart disease characterized by the abnormal blood flow from the left ventricle to the left atrium, as a result of the defective closure of the mitral valve (see, e.g., the work by [Khamlich et al.](https://onlinelibrary.wiley.com/doi/full/10.1002/fld.5118), the one by [Pitton et al.](https://www.sciencedirect.com/science/article/abs/pii/S0021999117303790), by [Pichi](https://iris.sissa.it/handle/20.500.11767/114329), and so on).
+In this project, we consider a sudden-expansion channel, since the evolution of a fluid flow in in such a setting can be seen as a simplified model of the _mitral valve regurgitation_ (in italian: _rigurgito mitralico_), a heart disease characterized by the abnormal blood flow from the left ventricle to the left atrium, as a result of the defective closure of the mitral valve (see, e.g., the work by [Khamlich et al.](https://onlinelibrary.wiley.com/doi/full/10.1002/fld.5118), the one by [Pitton et al.](https://www.sciencedirect.com/science/article/abs/pii/S0021999117303790), by [Pichi](https://iris.sissa.it/handle/20.500.11767/114329), and so on).
 Indeed, a channel with a sudden expansion preserves the essential properties of the blood flow through the two heart chambers.
 In specific cases, this flow can show a wall-hugging behavior, leading to incorrect measurements of the blood volume through echocardiography.
 
+This is a consequence of a bifurcation.
 More details on this are going to be provided briefly.
 
 
 ### Weak form of the Navier-Stokes equations
+---
+
 The weak form of the Navier-Stokes system, endowed with initial and boundary conditions, can then be written as follows: find
 $\boldsymbol{u}\in L^2(\mathbb{R}^+; [H^1(\Omega)]^d)\cap C^0(\mathbb{R}^+; [L^2(\Omega)]^d)$ and $p\in L^2(\mathbb{R}^+; Q)$ such that
 ```math
@@ -74,15 +80,22 @@ $\boldsymbol{u}\in L^2(\mathbb{R}^+; [H^1(\Omega)]^d)\cap C^0(\mathbb{R}^+; [L^2
 \int_\Omega q\nabla\cdot\boldsymbol{u} \, d\Omega = 0, \quad \forall q \in Q,
 \end{cases}
 ```
-in which the space $V = [H^1_{\Gamma_D}(\Omega)]^d = \{\boldsymbol{v}\in  [H^1(\Omega)]^d:\boldsymbol{v}\restriction_{\Gamma_D} = 0 \}$, and $Q=L^2(\Omega)$ if $\Gamma_N\neq\emptyset$, else $Q=L^2_0(\Omega)$.
+with $\boldsymbol{u}_{\restriction\Gamma_D}=\boldsymbol{\varphi}_D$ and $\boldsymbol{u}_{\restriction\{t=0\}}= \boldsymbol{u}_0$; in which we denoted the space $V = [H^1_{\Gamma_D}(\Omega)]^d = \{\boldsymbol{v}\in  [H^1(\Omega)]^d:\boldsymbol{v}_{\restriction\Gamma_D} = 0 \}$, and $Q=L^2(\Omega)$ if $\Gamma_N\neq\emptyset$, else $Q=L^2_0(\Omega)$.
+
+---
 
 The weak form is obtained by multiplication by parts and using Green's formula; the procedure is here omitted due to time reasons and to the fact that it is standard.
 
 Recall that the condition on the space $Q$ stems form the fact that, if no Neumann DBCs are imposed, $p$ appears in the equations only through its gradient, and is therefore determined only up a constant. 
 
+A small note: I considered the case in which the time interval is $I=\mathbb{R}^+$ for consistency with [Quarteroni's book](https://link.springer.com/book/10.1007/978-88-470-5522-3).
+The fact that for us $I$ will be bounded, i.e. $I=(0,T)$, for some $T\in\mathbb{R}^+$, does not change the general theory.
+
 
 ### Bifurcation problems: a symmetry-breaking bifurcation
-In CFD, difficulties might arise when the Reynolds number is high; in particular, there might be issue related to the uniqueness of the solution and transition of fluid flow stability.
+---
+
+In CFD, difficulties might arise when the Reynolds number is high; in particular, there may be issues related to the uniqueness of the solution and transition of fluid flow stability.
 
 These phenomena (as well as many other so-called _qualitative changes_) can be viewed within the framework of bifurcation theory.
 
@@ -120,9 +133,20 @@ While more detailed introduction to bifurcation theory (e.g. studying the relati
 
 The problem of the N-S equations in the considered geometry is indeed a bifurcation problem, when considering the parameter range, for instance, to be $\mathbb{P}=[0.5, 1.2]$.
 
-Indeed, while for values of $\mu> 0.96$ there is only one possible, symmetrical solution, for $\mu\approx 0.96$ a bifurcation happens, and three possible solutions are possible: the symmetrical one, and two asymmetrical ones, each one of them display a wall-hugging behaviour towards either the upper or the lower wall.
+Indeed, while for values of $\mu> 0.96$ there is only one possible solution, for $\mu\approx 0.96$ a bifurcation happens: uniqueness of the solution is lost, and three different branchs can be observed.
 
-It is important to stress that the asymmetrical solutions are stable, while the symmetrical one is not.
+
+The only possible configuration before the bifurcation point is a flow which is symmetrical with respect to the horizontal axis, and characterized by two symmetric vortices (called _Moffat eddies_) upstream and downstream of the expansion.
+
+For lower values of the viscosity, the inertial effects of the fluid become more important and the symmetry is broken in the two recirculation regions.
+Indeed, as the length of the recirculation zones increases, it is possible to observe a non-uniform decrease of the pressure along the vertical axis.
+
+Therefore, after the critical value $\mu^\ast$, one recirculation zone expands, whereas the other shrinks, giving rise to an asymmetric jet representing the wall-hugging behavior.
+
+After the bifurcation point, the symmetric flow becomes unstable, whereas the asymmetrical flows (bending towards either wall) become the stable configurations.
+Therefore, for high values of the corresponding Reynolds number, the model loses well-posedness, and we have to refer to the solution branches of a (supercritical) pitchfork bifurcation.
+
+Pitchork bifurcations are also referred to as _symmetry breaking_ bifurcations: as it is the case here, in bifurcating regime, solutions tend to be _less symmetrical_. 
 
 
 <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; text-align: center;">
@@ -270,7 +294,7 @@ Given an initial guess $(\boldsymbol{u}_0, p_0)$, at each step $k+1$ solve for t
 
 
 ## Continuation algorithm
-When dealing with bifurcation problems, it is of utmost importance to be able to reconstruct a specific branch in a neighborhood of the critical parameter value for which uniqueness is lost, i.e.\ to follow a desired branch while varying the value of the parameter.
+When dealing with bifurcation problems, it is of utmost importance to be able to reconstruct a specific branch in a neighborhood of the critical parameter value for which uniqueness is lost, i.e. to follow a desired branch while varying the value of the parameter.
 In this framework, several _continuation algorithms_ (see, for instance, [Keller's lectures](https://mathweb.tifr.res.in/sites/default/files/publications/ln/tifr79.pdf)) have been developed in the literature, which aim at generating a sequence of solutions belonging to the same branch.
 
 We describe now a simple example of continuation algorithm.
@@ -291,10 +315,13 @@ Also, remark that this is the actual strategy used in step 57, even though in th
 We also underline that, while the use of a continuation algorithm can turn out to be crucial in some scenarios, the computational mesh also plays a huge role in bifurcation problems, as pointed out, e.g. by [Gonnella et al.](https://arxiv.org/abs/2402.16803) in her last paper.
 
 ### The algorithm in the unsteady case
+
+---
+
 The simplest and most intuitive idea for a continuation algorithm in the time-dependent case would be to solve the steady problem using a continuation algorithm, obtaining an asymmetrical solution $(\boldsymbol{u}_\text{steady}, p_{\text{steady}})$, and to pass it as initial guess to the nonlinear solver.
 
 However, there are two criticalities related to this first, naive idea:
-- at the beginning of time stepping, when we are very far away from the steady solution, it is possible that the initial guess is "too far", slowing down convergence and making the use of the method much slower and more computationally demanding;
+- at the beginning of time stepping, when we are very far away from the steady solution, it is possible that the initial guess is "too far" from the actual solution, slowing down convergence and making the use of the method much slower and more computationally demanding;
 - related to the first one: the steady solution could be so much "far away" from the actual solution at the next time step that Newton's method does not even converge!
 
 ---
@@ -303,7 +330,7 @@ To overcome this issues, I have decided to introduce the following approach:
 
 - compute $(\boldsymbol{u}_\text{steady}, p_{\text{steady}})$ using a continuation algorithm;
 - at the beginning of each time step, for $n>1$, compute the relative distance in the $L_2$ norm between the steady solution and the solution at the previous time step $(\boldsymbol{u}^{n}, p^n)$, and call it $\alpha^{n+1}$.
-Then we have that $\displaystyle\alpha^{n+1} = \frac{\|(\boldsymbol{u}^{n}, p^n)-(\boldsymbol{u}_\text{steady}, p_{\text{steady}})\|_2}{\|(\boldsymbol{u}^{n}, p^n)\|_2}$;
+Then we have that $\displaystyle\alpha^{n+1} = \frac{\|(\boldsymbol{u}^{n}, p^n)-(\boldsymbol{u}_\text{steady}, p_{\text{steady}})\|_2}{\|(\boldsymbol{u}_\text{steady}, p_{\text{steady}})\|_2}$;
 - as initial guess for the nonlinear solver, pass the quantity given by $\displaystyle\alpha^{n+1}(\boldsymbol{u}^{n}, p^n) + (1-\alpha^{n+1})(\boldsymbol{u}_\text{steady}, p_{\text{steady}})$.
 
 This way, we have that, for each $n$, $\alpha^{n+1}\in [0,1]$, since the norm of the solution increases with time.
@@ -622,7 +649,7 @@ It is important to underline also that the `SIMPLE` class can be used with MPI.
 Moreover, as pointed out by Deparis et al., the efficiency of simples increases when $F$ is diagonally dominant, which happens, in this case, if $\Delta t$ is small enough.
 
 ---
-The only thing which is altered here w.r.t. the $\text{life}^\text{x}$ implementation is that I got rid on the dependence of SIMPLE on other $\text{life}^\text{x}$ helper functions.
+The only thing which is altered here w.r.t. the $\text{life}^\text{x}$ implementation is that I got rid on the dependence of `SIMPLE` on other $\text{life}^\text{x}$ helper functions.
 
 Moreover, a direct solver is used for the computation of the inverse of $F$ for reasons that are going to be explained in detail below.
 

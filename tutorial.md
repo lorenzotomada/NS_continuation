@@ -1492,7 +1492,11 @@ However, I just did it in order to show that an attempt was made in that directi
     system_rhs = 0.0;
 
 
-    FEValues<dim> fe_values(fe, quad_formula, update_values | update_quadrature_points | update_JxW_values | update_gradients);
+    FEValues<dim> fe_values(
+                          fe,
+                          quad_formula,
+                          update_values | update_quadrature_points | update_JxW_values | update_gradients
+                          );
     
     const unsigned int dofs_per_cell = fe.dofs_per_cell;
     const unsigned int n_q_points = quad_formula.size();
@@ -1577,9 +1581,9 @@ At this point, we assemble separately some of the quanitites appearing in the Ja
 The variables `quantity1` and `quantity2` correspond to different contributions to the matrix (see the comments below for a more detailed clarification), but just `quantity1` will be multiplied by $\theta$ when using a $\theta$-method.
 ```cpp
                 const double quantity1 =
-                      viscosity * scalar_product(grad_phi_u[i], grad_phi_u[j])   //  a(u, v) ---> mu*grad(u)*grad(v)  
-                      + phi_u[i] * (present_velocity_gradients[q] * phi_u[j])    //  Linearization of the convective term (pt. 1) 
-                      + phi_u[i] * (grad_phi_u[j] * present_velocity_values[q]); //  Linearization of the convective term (pt. 2) 
+                      viscosity * scalar_product(grad_phi_u[i], grad_phi_u[j])   // a(u, v) ---> mu*grad(u)*grad(v)  
+                      + phi_u[i] * (present_velocity_gradients[q] * phi_u[j])    // Linearization of the convective term 
+                      + phi_u[i] * (grad_phi_u[j] * present_velocity_values[q]); // linearization (pt. 2) 
                 
 
                 double quantity2 =
@@ -1685,7 +1689,13 @@ We choose the correct constraints object and use its `distribute_local_to_global
 
 
         if (assemble_jacobian)
-          constraints_used.distribute_local_to_global(local_matrix, local_rhs, local_dof_indices, jacobian_matrix, system_rhs);
+          constraints_used.distribute_local_to_global(
+                                                      local_matrix, 
+                                                      local_rhs,
+                                                      local_dof_indices,
+                                                      jacobian_matrix,
+                                                      system_rhs
+                                                      );
         else
           constraints_used.distribute_local_to_global(local_rhs, local_dof_indices, system_rhs);
       }
@@ -1752,7 +1762,15 @@ The only interesting remark regarding this function is that the preconditioner i
 Clearly, the correct one needs to be selected, depending on the `steady_system` flag.
 ```cpp
     if (steady_system)
-      steady_preconditioner.reset(new BlockSchurPreconditioner(timer, gamma, viscosity, jacobian_matrix, pressure_mass_matrix));
+      steady_preconditioner.reset(
+                                  new BlockSchurPreconditioner(
+                                                              timer,
+                                                              gamma,
+                                                              viscosity,
+                                                              jacobian_matrix,
+                                                              pressure_mass_matrix
+                                                              )
+                                  );
 
     else
     {
@@ -1868,8 +1886,8 @@ This is done in line with what was explained in the theoretical introduction, i.
  ```cpp
       else
       {
-        /* Choose the initial guess for Netwon's method: either the solution at the previous time step, or a linear combination 
-        between it and an asymmetrical one */
+        /* Choose the initial guess for Netwon's method: either the solution at the previous time step, or a linear
+        combination between it and an asymmetrical one */
         double guess_u_norm{steady_solution.block(0).l2_norm()};
 
         if (use_continuation && guess_u_norm!=0 && !steady_system && line_search_n==0)  // reinit initial guess
@@ -1880,13 +1898,13 @@ This is done in line with what was explained in the theoretical introduction, i.
 At first, `tmp_initial_guess` is used to measure the distance between the solution at the previous time step and the steady solution.
 Afterwards, it will be reinitialized and used as an actual initial guess.
 ```cpp
-tmp_initial_guess -= old_solution;
+          tmp_initial_guess -= old_solution;
           tmp_initial_guess += steady_solution; // initial guess - old solution
 
 
           double dist_from_guess{tmp_initial_guess.l2_norm()};
           double alpha = dist_from_guess/guess_u_norm; // so that it is always in [0, 1]
-          pcout << "  The relative distance between the solution at the previous time step and the one to the steady problem is "
+          pcout << "The relative distance between the solution at the previous time step and the one to the steady problem is "
                 << alpha << std::endl;
 
 
@@ -1991,9 +2009,9 @@ The only difference of this implementation with respect to the one in the `deal.
 
     // recall that the solution belongs to a mixed function space
     std::vector<DataComponentInterpretation::DataComponentInterpretation> data_component_interpretation(
-                                                                              dim,
-                                                                              DataComponentInterpretation::component_is_part_of_vector
-                                                                              );
+                                                                    dim,
+                                                                    DataComponentInterpretation::component_is_part_of_vector
+                                                                    );
     data_component_interpretation.push_back(DataComponentInterpretation::component_is_scalar);
 
 
@@ -2180,7 +2198,8 @@ The logic behind it is the one described in the theoretical introduction, so no 
     for (double mu = viscosity_begin_continuation; mu >= target_viscosity; mu -= continuation_step_size)
     {
       viscosity = mu;
-      pcout << "\n" << std::string(20, '-') << " Searching for initial guess with mu = " << mu << " " << std::string(20, '-') << "\n" << std::endl;
+      pcout << "\n" << std::string(20, '-') << " Searching for initial guess with mu = " << mu << " "
+            << std::string(20, '-') << "\n" << std::endl;
 
       newton_iteration(steady_solution, tol, n_max_iter, is_initial_step, steady_system);
       

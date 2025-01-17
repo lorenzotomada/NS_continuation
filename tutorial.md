@@ -2617,10 +2617,57 @@ The two take-home messages are the following:
 
 
 ## Distorted mesh, with no continuation algorithms and no mesh refinement
-Since the continuation algorithm in the unsteady case appears to be of no use to influence the branch towards which the solution will converge, it is natural to ask whether the bifurcating behaviour can be seen even without using continuation or mesh refinement.
+Since the continuation algorithm in the unsteady case appears to be of no use to influence the branch towards which the solution converges, it is natural to ask whether the bifurcating behaviour can be seen even without using continuation or mesh refinement.
 
-The answer is positive.
+The answer is affermative.
 
+<div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; text-align: center;">
+  <div>
+    <img src="images/no_continuation/t_0.1.png" alt="Image 1" width="500" height="auto">
+    <p>t=0.1</p>
+  </div>
+  <div>
+    <img src="images/no_continuation/t_1.0.png" alt="Image 2" width="500" height="auto">
+    <p>t=1</p>
+  </div>
+  <div>
+    <img src="images/no_continuation/t_5.0.png" alt="Image 3" width="500" height="auto">
+    <p>t=5</p>
+  </div>
+  <div>
+    <img src="images/no_continuation/t_15.0.png" alt="Image 4" width="500" height="auto">
+    <p>t=15</p>
+  </div>
+  <div>
+    <img src="images/no_continuation/t_20.0.png" alt="Image 4" width="500" height="auto">
+    <p>t=20</p>
+  </div>
+  <div>
+    <img src="images/no_continuation/t_50.0.png" alt="Image 4" width="500" height="auto">
+    <p>t=60</p>
+  </div>
+</div>
+
+---
+
+Moreover, we can observe the same trend for the residual and the relative distance:
+
+<div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; text-align: center;">
+  <div>
+    <img src="images/no_continuation/relative_distances.png" alt="Image 1" width="500" height="auto">
+    <p>Relative distance</p>
+  </div>
+  <div>
+    <img src="images/no_continuation/residuals.png" alt="Image 2" width="500" height="auto">
+    <p>Residual</p>
+  </div>
+</div>
+
+Remark that the solution belongs to the upper branch, which is the same one that was reached in the previous numerical experiment.
+
+---
+
+As a result, it is possible to claim that, at least in this test case, our simple continuation algorithm seems to be unnecessary in order to observe the asymmetrical configuration.
 
 ## Distorted mesh, with a continuation algorithm, but mesh refinement performed (twice) just after continuation
 For this test, mesh refinement is not performed in time; instead, it is performed after continuation.

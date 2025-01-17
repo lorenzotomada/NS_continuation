@@ -20,5 +20,9 @@ To run:
 ```
 or, using MPI:
 ```bash
-mpirun -np 4 ./main
+mpirun -np 1 ./main
 ```
+In the example above, `-np 1` is chosen to illustrate the use of the command.
+However, for this particular problem, the moderate number of DoFs makes it inefficient to use multiple ranks, since overhead is unnecessarily introduced.
+
+As a result, I recommend running the code in serial mode for testing purposes.

@@ -65,33 +65,6 @@ In specific cases, this flow can show a wall-hugging behavior, leading to incorr
 This is a consequence of a bifurcation.
 More details on this are going to be provided briefly.
 
-
-### Weak form of the Navier-Stokes equations
----
-
-The weak form of the Navier-Stokes system, endowed with initial and boundary conditions, can then be written as follows: find
-$\boldsymbol{u}\in L^2(\mathbb{R}^+; [H^1(\Omega)]^d)\cap C^0(\mathbb{R}^+; [L^2(\Omega)]^d)$ and $p\in L^2(\mathbb{R}^+; Q)$ such that
-```math
-\begin{cases}{}
-\begin{aligned}
-    &\int_\Omega \frac{\partial \boldsymbol{u}}{\partial t}\cdot\boldsymbol{v}\, d\Omega + \int_\Omega \mu\nabla\boldsymbol{u}\cdot\nabla\boldsymbol{v} \, d\Omega + \int_\Omega [(\boldsymbol{u}\cdot\nabla)]\boldsymbol{u}\cdot\boldsymbol{v} \, d\Omega +\\
-    &\displaystyle\quad - \int_\Omega p\nabla\cdot\boldsymbol{v} \, d\Omega = \int_\Omega \boldsymbol{f}\cdot\boldsymbol{v} \, d\Omega + \int_{\Gamma_N} \boldsymbol{\psi}\cdot\boldsymbol{v} \, d\gamma,  \quad \forall \boldsymbol{v} \in V,
-\end{aligned} \\
-\int_\Omega q\nabla\cdot\boldsymbol{u} \, d\Omega = 0, \quad \forall q \in Q,
-\end{cases}
-```
-with $\boldsymbol{u}_{\restriction\Gamma_D}=\boldsymbol{\varphi}_D$ and $\boldsymbol{u}_{\restriction\{t=0\}}= \boldsymbol{u}_0$; in which we denoted the space $V = [H^1_{\Gamma_D}(\Omega)]^d = \{\boldsymbol{v}\in  [H^1(\Omega)]^d:\boldsymbol{v}_{\restriction\Gamma_D} = 0 \}$, and $Q=L^2(\Omega)$ if $\Gamma_N\neq\emptyset$, else $Q=L^2_0(\Omega)$.
-
----
-
-The weak form is obtained by multiplication by parts and using Green's formula; the procedure is here omitted due to time reasons and to the fact that it is standard.
-
-Recall that the condition on the space $Q$ stems form the fact that, if no Neumann DBCs are imposed, $p$ appears in the equations only through its gradient, and is therefore determined only up a constant. 
-
-A small note: I considered the case in which the time interval is $I=\mathbb{R}^+$ for consistency with [Quarteroni's book](https://link.springer.com/book/10.1007/978-88-470-5522-3).
-The fact that for us $I$ will be bounded, i.e. $I=(0,T)$, for some $T\in\mathbb{R}^+$, does not change the general theory.
-
-
 ### Bifurcation problems: a symmetry-breaking bifurcation
 ---
 
@@ -101,11 +74,13 @@ These phenomena (as well as many other so-called _qualitative changes_) can be v
 
 Consider the general (strong) form of a parameterized PDE: for a given value of $\boldsymbol{\mu}\in\mathbb{P}\subset\mathbb{R}^p$, find $X\in\mathbb{X}$ such that
 ```math
-F(X; \boldsymbol{\mu}_{n})=0
+F(X; \boldsymbol{\mu})=0
 ```
 with $F: \mathbb{X}\rightarrow\mathbb{X}'$.
 
-We say that $\boldsymbol{\mu^{\ast}}\in\mathbb{P}$ is a _bifurcation point_ for the PDE if there exists a sequence $(X_n, \boldsymbol{\mu}_n)$, $X_n$ being not trivial, such that:
+Assume that there exists a so-called _trivial solution_ (here, just for notational purposes, assumed to be $X = 0$), such that for every parameter $\boldsymbol{\mu}\in\mathbb{P}$, namely $F(0;\, \boldsymbol{\mu}) = 0,\, \forall\boldsymbol{\mu}\in\mathbb{P}$.
+
+We say that $\boldsymbol{\mu^{\ast}}\in\mathbb{P}$ is a _bifurcation point_ for the PDE if there exists a sequence $(X_n, \boldsymbol{\mu}_n)$, with $X_n\neq0$ for each $n$, such that:
 ```math
     \begin{cases}{}
         F(X_n; \boldsymbol{\mu}_n)=0,  \quad\forall n\in\mathbb{N} \\
@@ -121,7 +96,7 @@ The _solution manifold_ is given by the union of all the branches:
 \mathcal{S} = \bigcup_{i = 1}^k\mathcal{M}_i\coloneqq \bigcup_{i=1}^k\{X_i(\boldsymbol{\mu})\in\mathbb{X}: F(X_i(\boldsymbol{\mu}); \,\boldsymbol{\mu}) = 0,\, \boldsymbol{\mu}\in\mathbb{P}\}.
 ```
 
-We remark that there exists a so-called _trivial solution_ (here, just for notational purposes, assumed to be $X = 0$), such that for every parameter $\boldsymbol{\mu}\in\mathbb{P}$, namely $F(0;\, \boldsymbol{\mu}) = 0,\, \forall\boldsymbol{\mu}\in\mathbb{P}$. We can also define the set  of non-trivial solutions as
+We can also define the set  of non-trivial solutions as
 $\mathcal{N} = \{(X, \boldsymbol{\mu})\in \mathbb{X} \times \mathcal{P} : X\neq 0,\, F(X;\, \boldsymbol{\mu})= 0,\, \forall\boldsymbol{\mu}\in\mathbb{P} \}$.
 
 
@@ -161,7 +136,34 @@ Pitchork bifurcations are also referred to as _symmetry breaking_ bifurcations: 
 </div>
 
 
+### Weak form of the Navier-Stokes equations
+---
+
+The weak form of the Navier-Stokes system, endowed with initial and boundary conditions, can then be written as follows: find
+$\boldsymbol{u}\in L^2(\mathbb{R}^+; [H^1(\Omega)]^d)\cap C^0(\mathbb{R}^+; [L^2(\Omega)]^d)$ and $p\in L^2(\mathbb{R}^+; Q)$ such that
+```math
+\begin{cases}{}
+\begin{aligned}
+    &\int_\Omega \frac{\partial \boldsymbol{u}}{\partial t}\cdot\boldsymbol{v}\, d\Omega + \int_\Omega \mu\nabla\boldsymbol{u}\cdot\nabla\boldsymbol{v} \, d\Omega + \int_\Omega [(\boldsymbol{u}\cdot\nabla)]\boldsymbol{u}\cdot\boldsymbol{v} \, d\Omega +\\
+    &\displaystyle\quad - \int_\Omega p\nabla\cdot\boldsymbol{v} \, d\Omega = \int_\Omega \boldsymbol{f}\cdot\boldsymbol{v} \, d\Omega + \int_{\Gamma_N} \boldsymbol{\psi}\cdot\boldsymbol{v} \, d\gamma,  \quad \forall \boldsymbol{v} \in V,
+\end{aligned} \\
+\int_\Omega q\nabla\cdot\boldsymbol{u} \, d\Omega = 0, \quad \forall q \in Q,
+\end{cases}
+```
+with $\boldsymbol{u}_{\restriction\Gamma_D}=\boldsymbol{\varphi}_D$ and $\boldsymbol{u}_{\restriction\{t=0\}}= \boldsymbol{u}_0$; in which we denoted the space $V = [H^1_{\Gamma_D}(\Omega)]^d = \{\boldsymbol{v}\in  [H^1(\Omega)]^d:\boldsymbol{v}_{\restriction\Gamma_D} = 0 \}$, and $Q=L^2(\Omega)$ if $\Gamma_N\neq\emptyset$, else $Q=L^2_0(\Omega)$.
+
+---
+
+The weak form is obtained by multiplication by parts and using Green's formula; the procedure is here omitted due to time reasons and to the fact that it is standard.
+
+Recall that the condition on the space $Q$ stems form the fact that, if no Neumann DBCs are imposed, $p$ appears in the equations only through its gradient, and is therefore determined only up a constant. 
+
+A small note: I considered the case in which the time interval is $I=\mathbb{R}^+$ for consistency with [Quarteroni's book](https://link.springer.com/book/10.1007/978-88-470-5522-3).
+The fact that for us $I$ will be bounded, i.e. $I=(0,T)$, for some $T\in\mathbb{R}^+$, does not change the general theory.
+
+
 # Finite Element discretization
+
 Once we have fixed two finite-dimensional spaces $V_h\subset V$ and $Q_h\subset Q$ for velocity and pressure, it is possible to impose that the weak form of the problem only holds on a basis of these two spaces.
 
 In the followin, we omit the dependence on $\mu$ for notational purposes.
@@ -641,8 +643,8 @@ This operation, in turn, requires computing the inverses of $F$ and $\widetilde{
 
 To do so, $F$ and $\widetilde{\Sigma}$ are approximated, and we refer to the method obtained in this way as _aSIMPLE_ (approximate SIMPLE).
 
-Since $P_{\text{SIMPLE}}=LU$, we can rewrite $P_{\text{SIMPLE}}^{-1}x$ as $U^{-1}L^{-1}x$.
-Hence, to compute $z=P_{\text{SIMPLE}}^{-1}x$, we can first solve $Ly = x$ trough the `vmult_L` method, and then $Uz = y$, using `vmult_U`.
+Since $P_{\text{SIMPLE}}=LU$, we can rewrite $P_{\text{SIMPLE}}^{-1}$ as $U^{-1}L^{-1}$.
+Hence, to compute $z=P_{\text{SIMPLE}}^{-1}x=U^{-1}L^{-1}x$, we can first solve $Ly = x$ trough the `vmult_L` method, and then $Uz = y$, using `vmult_U`.
 
 
 It is important to underline also that the `SIMPLE` class can be used with MPI.
@@ -656,20 +658,24 @@ Moreover, a direct solver is used for the computation of the inverse of $F$ for 
 
 ---
 #### `SIMPLE` helpers
-We begin by creating the sparsity pattern for the Schur complement matrix:
+We begin by creating the sparsity pattern for the approximate Schur complement matrix $\tilde{\Sigma}$.
+We begin by computing $BB^T$:
 ```cpp
   inline void schur_complement_sparsity(DynamicSparsityPattern &dst, const PETScWrappers::MPI::BlockSparseMatrix &src)
   {
     PETScWrappers::MPI::SparseMatrix tmp_mat;
-    src.block(1, 0).mmult(tmp_mat, src.block(0, 1));
-
+    src.block(1, 0).mmult(tmp_mat, src.block(0, 1)); // tmp_mat = B*B^T
+```
+Then we add its entries to the sparsity pattern:
+```cpp
     for (const auto &row : tmp_mat.locally_owned_range_indices())
     {
       for (auto entry = tmp_mat.begin(row); entry != tmp_mat.end(row); ++entry)
         dst.add(entry->row(), entry->column());
     }
-
-    // Add entries for the (1, 1) block.
+```
+Then we add the entries corresponding to the $(1,1)$ block:
+```cpp
     for (const auto &row : src.block(1, 1).locally_owned_range_indices())
     {
       for (auto entry = src.block(1, 1).begin(row); entry != src.block(1, 1).end(row); ++entry)
@@ -687,7 +693,7 @@ We can then compute the Schur complement:
                               )
   {
     PETScWrappers::MPI::SparseMatrix tmp_mat;
-    src.block(1, 0).mmult(tmp_mat, src.block(0, 1), diag_A00_inverse);
+    src.block(1, 0).mmult(tmp_mat, src.block(0, 1), diag_A00_inverse); // this computes B*diag_A00_inverse*B^T
 
     dst = 0.0;
     dst.add(1.0, tmp_mat);
@@ -743,7 +749,8 @@ Here we also save a `PETScWrappers::SparseDirectMUMPS` object: while the choice 
 - Since the Jacobian matrix is not updated at each step (more on that in the following), we need to solve various linear systems with the same matrix. Therefore it might make sense to compute its factorization once and then use it to solve multiple linear systems;
 - The number of DoFs considered in this script (at least in the 2D case) is still moderate, i.e. around 10.000/20.000 DoFs, making the advantage of iterative methods less evident.
 ```cpp
-    SolverControl tmp_solver_control; // used just to initialize F_solver
+    SolverControl tmp_solver_control; /* used just to initialize F_solver, which still wants a SolverControl even though
+                                       * it is a direct solver */
     mutable PETScWrappers::SparseDirectMUMPS F_solver;
   };
 ```
@@ -813,7 +820,8 @@ The following functions are needed to initialize and assemble the Schur compleme
       diag_F_inv(j) = 1.0 / (*jacobian_matrix).block(0, 0).diag_element(j);
     }
 
-
+    
+    // compute diag_F_inv
     diag_F_inv.compress(VectorOperation::insert);
     schur_complement(approximate_schur, (*jacobian_matrix), diag_F_inv);
   }
@@ -849,6 +857,7 @@ The following functions are the ones needed to implement `vmult`, i.e. multiplic
     PETScWrappers::MPI::Vector solution(dst.block(1));
     solution = 0.0;
 
+
     Schur_solver.solve(approximate_schur, solution, tmp.block(1), Schur_inv_preconditioner); // d1 = (-Sigma^{-1}) * t1
     dst.block(1) = solution;
 
@@ -868,6 +877,7 @@ The following functions are the ones needed to implement `vmult`, i.e. multiplic
     (*jacobian_matrix).block(0, 1).vmult(dst.block(0), src.block(1)); // d0 = B^T * s1
     dst.block(0).scale(diag_F_inv); // d0 = D^{-1} * d0
     dst.block(0).sadd(-1.0, src.block(0)); // d0 = s0 - d0
+
 
     if (src.n_blocks() == 3) 
       dst.block(2) = src.block(2);
@@ -1227,7 +1237,7 @@ Its only actions are to instantiate most of the attributes of the class, and to 
 ```
 ## The `make_grid` method
 This method creates a triangulation covering the domain considered in this project.
-An interesting remark is that `GridGenerator::subdivided_hyper_rectangle` needed to be used instead of `GridGenerator::hyper_rectangle`, as the latter yielded cells which were too stretched (here, instead, the aspect ratio of cells is smaller).
+An interesting remark is that `GridGenerator::subdivided_hyper_rectangle` needed to be used instead of `GridGenerator::hyper_rectangle`, as the latter yielded cells which were too stretched (here, instead, the aspect ratio of cells is smaller, check [the documentation](https://www.dealii.org/current/doxygen/deal.II/namespaceGridGenerator.html#ac76417d7404b75cf53c732f456e6e971)).
 
 This method is mostly based on the code written by [Gonnella for her most recent paper](https://github.com/ICGonnella/SSFEM-Coanda-Effect/blob/main/source/coanda.cpp), though with some tweaks and the addition of the 3D computational mesh.
 ```cpp
@@ -1264,10 +1274,10 @@ Afterwards, we remove the cells which cover areas (or volumes) not belonging to 
     {
       inside_domain = true;
 
+
       for (unsigned int v = 0; v < GeometryInfo<dim>::vertices_per_cell; ++v)
       {
         bool before_10_x_coord{cell->vertex(v)[0]<10}; // check if we are at the inlet
-
         double v1{cell->vertex(v)[1]}; // check the y coordinate of the vertex
 
         bool first_check{(v1 > 5.0 && v1 < 7.5) || (v1 < 2.5)};
@@ -1278,6 +1288,7 @@ Afterwards, we remove the cells which cover areas (or volumes) not belonging to 
           if (before_10_x_coord && first_check)
             inside_domain = false; // if dim==2, it is a sufficient condition to be in the inlet
         }
+
 
         else // otherwise we need to check also the z component
         {
@@ -1292,6 +1303,7 @@ Afterwards, we remove the cells which cover areas (or volumes) not belonging to 
 
       if (!inside_domain)
         cells_to_remove.insert(cell);
+
     }
 ```
 We create a triangulation with the removed cells, and we assign a label to each portion of the boundrary (inlet, no-slip, and outflow)

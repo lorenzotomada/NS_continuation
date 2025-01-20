@@ -1,6 +1,6 @@
-# Formal problem statement
+# A symmetry-breaking bifurcation in a sudden-expansion channel
 
-The goal of this script is to study a symmetry-breaking bifurcation phenomena caused by the so-called _Coandă effect_ in a sudden-expansion channel.
+The goal of this script is to study a symmetry-breaking bifurcation phenomenon caused by the so-called _Coandă effect_ in a sudden-expansion channel.
 
 An introduction to the problem, as well as the strategies used to solve it, are presented in the following.
 
@@ -74,9 +74,8 @@ These phenomena (as well as many other so-called _qualitative changes_) can be v
 
 Consider the general (strong) form of a parameterized PDE: for a given value of $\boldsymbol{\mu}\in\mathbb{P}\subset\mathbb{R}^p$, find $X\in\mathbb{X}$ such that
 ```math
-F(X; \boldsymbol{\mu})=0
+F(X; \boldsymbol{\mu})=0.
 ```
-with $F: \mathbb{X}\rightarrow\mathbb{X}'$.
 
 Assume that there exists a so-called _trivial solution_ (here, just for notational purposes, assumed to be $X = 0$), such that for every parameter $\boldsymbol{\mu}\in\mathbb{P}$, namely $F(0;\, \boldsymbol{\mu}) = 0,\, \forall\boldsymbol{\mu}\in\mathbb{P}$.
 
@@ -239,7 +238,7 @@ It consists in replacing $B^T\boldsymbol{p}_\theta^{n+1}$ with $B^T\boldsymbol{p
 
 ---
 
-With that being said, The numerical method then reads as follows: at each time step, the approximated solution can be computed by solving the non-linear system
+With that being said, the numerical method then reads as follows: at each time step, the approximated solution can be computed by solving the non-linear system
 
 ```math
 \begin{cases}{}
@@ -288,9 +287,9 @@ In the previous equation, with a slight abuse of notation, we denoted by $\bolds
 
 
 At each time step $n+1$, the equation to be solved at each iteration of the method is then the usual one.
-Given an initial guess $(\boldsymbol{u}_0, p_0)$, at each step $k+1$ solve for the update $(\delta\boldsymbol{u}_{k+1}, \delta p_{k+1}) = (\boldsymbol{u}_{k+1}-\boldsymbol{u}_{k}, p_{k+1}-p_{k})$ the equation:
+Given an initial guess $(\boldsymbol{u}_0^{n+1}, p_0^{n+1})$, at each step $k+1$ solve for the update $(\delta\boldsymbol{u}_{k+1}, \delta p_{k+1}) = (\boldsymbol{u}_{k+1}^{n+1}-\boldsymbol{u}_{k}^{n+1}, p_{k+1}^{n+1}-p_{k}^{n+1})$ the equation:
 ```math
-\mathcal{J}(\boldsymbol{u}_k, p_k)[(\delta\boldsymbol{u}^{k+1}, \delta p^{k+1})] = -\mathcal{\boldsymbol{F}}^{n+1}(\boldsymbol{\boldsymbol{u}_k, p_k})
+\mathcal{J}(\boldsymbol{u}_k^{n+1}, p_k^{n+1})[(\delta\boldsymbol{u}_{k+1}, \delta p_{k+1})] = -\mathcal{\boldsymbol{F}}^{n+1}(\boldsymbol{\boldsymbol{u}_k^{n+1}, p_k^{n+1}})
 ```
 
 
@@ -1901,6 +1900,7 @@ This is done in line with what was explained in the theoretical introduction, i.
         /* Choose the initial guess for Netwon's method: either the solution at the previous time step, or a linear
         combination between it and an asymmetrical one */
         double guess_u_norm{steady_solution.block(0).l2_norm()};
+
 
         if (use_continuation && guess_u_norm!=0 && !steady_system && line_search_n==0)  // reinit initial guess
         {

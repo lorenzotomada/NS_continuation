@@ -1,3 +1,5 @@
+# Final project for the exam in Advanced Topics in Scientific Computing
+
 The file `tutorial.md` constains a theoretical introduction to the material, as well as the commented code, and is structured in the style of a `deal.II` tutorial.
 
 The file which is actually compiled when using CMake is, of course, `main.cpp`.
